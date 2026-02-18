@@ -1,7 +1,0 @@
-[package]
-name = "vaultagent-server"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-anyhow.workspace = true
