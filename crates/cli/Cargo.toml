@@ -1,0 +1,12 @@
+[package]
+name = "vaultagent-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "vaultagent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+vaultagent-core = { path = "../core" }
