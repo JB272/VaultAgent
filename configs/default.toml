@@ -18,8 +18,12 @@ timeout_seconds = 10
 max_response_bytes = 1048576
 
 [routing]
-default_model = "local-small"
-upgrade_model = "local-large"
+default_model = "gpt-4o-mini"
+upgrade_model = "gpt-4.1"
+
+[provider]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
 
 [audit]
 runs_dir = "runs"
