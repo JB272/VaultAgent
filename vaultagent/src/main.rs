@@ -1,18 +1,32 @@
 mod gateway;
 mod reasoning;
 
-use gateway::com::telegram::TelegramBot;
+use gateway::com::{telegram::TelegramBot, website::WebsiteGateway};
 use gateway::incoming_actions_queue::{IncomingAction, IncomingActionQueue};
 use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let incoming_actions = IncomingActionQueue::new();
-    let telegram_writer = incoming_actions.register_service();
 
-    let telegram = TelegramBot::from_env()?;
-    telegram.start(telegram_writer).await?;
+    let website_writer = incoming_actions.register_service();
+    let website = WebsiteGateway::from_env();
+    website.start(website_writer).await?;
 
+    if TelegramBot::is_enabled() {
+        if let Some(telegram) = TelegramBot::from_env() {
+            let telegram_writer = incoming_actions.register_service();
+            telegram.start(telegram_writer).await?;
+        } else {
+            println!("Telegram deaktiviert: unvollständige Telegram-Konfiguration.");
+        }
+    } else {
+        println!("Telegram deaktiviert: kein Telegram-Token gefunden.");
+    }
+
+
+
+	
     loop {
         let action = incoming_actions.pop().await;
         match action {

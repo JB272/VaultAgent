@@ -1,3 +1,4 @@
+use crate::gateway::com::{get_non_empty_env, is_token_service_enabled};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
 use axum::{
     Router,
@@ -30,19 +31,28 @@ impl TelegramBot {
         }
     }
 
-    pub fn from_env() -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let token = std::env::var("TELEGRAM_BOT_TOKEN")
-            .map_err(|_| "Bitte TELEGRAM_BOT_TOKEN als Umgebungsvariable setzen.")?;
+    pub fn is_enabled() -> bool {
+        is_token_service_enabled("TELEGRAM_BOT_TOKEN")
+    }
 
-        let webhook_url = std::env::var("TELEGRAM_WEBHOOK_URL")
-            .map_err(|_| "Bitte TELEGRAM_WEBHOOK_URL als Umgebungsvariable setzen.")?;
+    pub fn from_env() -> Option<Self> {
+        let token = get_non_empty_env("TELEGRAM_BOT_TOKEN")?;
+
+        let webhook_url = get_non_empty_env("TELEGRAM_WEBHOOK_URL");
+
+        let Some(webhook_url) = webhook_url else {
+            eprintln!(
+                "TELEGRAM_BOT_TOKEN ist gesetzt, aber TELEGRAM_WEBHOOK_URL fehlt. Telegram wird nicht gestartet."
+            );
+            return None;
+        };
 
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(8080);
 
-        Ok(Self::new(token, webhook_url, port))
+        Some(Self::new(token, webhook_url, port))
     }
 
     pub async fn start(

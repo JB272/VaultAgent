@@ -1,0 +1,98 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #0f1115;
+  color: #f5f7fa;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.chat-shell {
+  width: min(900px, 95vw);
+  height: min(700px, 92vh);
+  background: #171a21;
+  border: 1px solid #2b3240;
+  border-radius: 16px;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 64px 1fr 84px;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid #2b3240;
+  background: #1d2230;
+}
+
+.chat-title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.chat-status {
+  color: #8fa0bf;
+  font-size: 12px;
+}
+
+.messages {
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bubble {
+  max-width: 78%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  line-height: 1.35;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.bubble.you {
+  margin-left: auto;
+  background: #2b6ff7;
+}
+
+.bubble.system {
+  margin-right: auto;
+  background: #252b39;
+}
+
+.composer {
+  border-top: 1px solid #2b3240;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 14px;
+  background: #141923;
+}
+
+.composer input {
+  background: #0e1219;
+  border: 1px solid #2b3240;
+  color: #f5f7fa;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.composer button {
+  border: 0;
+  background: #2b6ff7;
+  color: white;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang='de'>
+  <head>
+    <meta charset='UTF-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1.0' />
+    <title>VaultAgent Chat</title>
+    <link rel='stylesheet' href='/assets/website.css' />
+  </head>
+  <body>
+    <section class='chat-shell'>
+      <header class='chat-header'>
+        <div class='chat-title'>VaultAgent Gateway Chat</div>
+        <div class='chat-status'>lokal verbunden</div>
+      </header>
+      <main id='messages' class='messages'>
+        <div class='bubble system'>Schreibe eine Nachricht, um sie als IncomingAction ans Gateway zu senden.</div>
+      </main>
+      <form id='composer' class='composer'>
+        <input id='messageInput' autocomplete='off' placeholder='Nachricht an das Gateway...' />
+        <button type='submit'>Senden</button>
+      </form>
+    </section>
+
+    <script>
+      const messagesEl = document.getElementById('messages');
+      const composerEl = document.getElementById('composer');
+      const inputEl = document.getElementById('messageInput');
+
+      function addBubble(message) {
+        const bubble = document.createElement('div');
+        bubble.className = `bubble ${message.source === 'you' ? 'you' : 'system'}`;
+        bubble.textContent = message.text;
+        messagesEl.appendChild(bubble);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      async function refreshMessages() {
+        const response = await fetch('/api/messages');
+        if (!response.ok) return;
+        const data = await response.json();
+        const rendered = messagesEl.querySelectorAll('.bubble').length;
+        if (data.length + 1 > rendered) {
+          while (messagesEl.lastChild) messagesEl.removeChild(messagesEl.lastChild);
+          addBubble({ text: 'Schreibe eine Nachricht, um sie als IncomingAction ans Gateway zu senden.', source: 'system' });
+          data.forEach(addBubble);
+        }
+      }
+
+      composerEl.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        const response = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        });
+
+        if (response.ok) {
+          inputEl.value = '';
+          await refreshMessages();
+        }
+      });
+
+      setInterval(refreshMessages, 1000);
+      refreshMessages();
+    </script>
+  </body>
+</html>
