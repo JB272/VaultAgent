@@ -69,6 +69,16 @@ body {
   background: #252b39;
 }
 
+.bubble.assistant {
+  margin-right: auto;
+  background: #334155;
+}
+
+.bubble.typing {
+  opacity: 0.85;
+  font-style: italic;
+}
+
 .composer {
   border-top: 1px solid #2b3240;
   display: grid;

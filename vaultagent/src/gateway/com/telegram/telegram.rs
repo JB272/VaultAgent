@@ -117,6 +117,38 @@ impl TelegramBot {
             .ok_or_else(|| "Telegram API returned no message".into())
     }
 
+    pub async fn send_chat_action(
+        &self,
+        chat_id: i64,
+        action: impl Into<String>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let request = SendChatActionRequest {
+            chat_id,
+            action: action.into(),
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/sendChatAction", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<bool> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+
+        if body.result.unwrap_or(false) {
+            Ok(())
+        } else {
+            Err("Telegram API could not send chat action".into())
+        }
+    }
+
     pub async fn get_updates(
         &self,
         offset: Option<i64>,
@@ -174,6 +206,29 @@ impl TelegramBot {
     }
 }
 
+pub async fn setup_telegram(incoming_writer: IncomingActionWriter) -> Option<TelegramBot> {
+    if TelegramBot::is_enabled() {
+        if let Some(telegram) = TelegramBot::from_env() {
+            match telegram.start(incoming_writer).await {
+                Ok(()) => Some(telegram),
+                Err(err) => {
+                    eprintln!(
+                        "Telegram deaktiviert: Start fehlgeschlagen ({}). Website läuft weiter.",
+                        err
+                    );
+                    None
+                }
+            }
+        } else {
+            println!("Telegram deaktiviert: unvollständige Telegram-Konfiguration.");
+            None
+        }
+    } else {
+        println!("Telegram deaktiviert: kein Telegram-Token gefunden.");
+        None
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     incoming_writer: IncomingActionWriter,
@@ -209,6 +264,12 @@ struct ApiResponse<T> {
 struct SendMessageRequest {
     chat_id: i64,
     text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SendChatActionRequest {
+    chat_id: i64,
+    action: String,
 }
 
 #[derive(Debug, Serialize)]

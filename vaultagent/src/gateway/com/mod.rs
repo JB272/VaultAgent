@@ -1,4 +1,7 @@
+#[path = "telegram/telegram.rs"]
 pub mod telegram;
+
+#[path = "website/website.rs"]
 pub mod website;
 
 pub(crate) fn get_non_empty_env(name: &str) -> Option<String> {
