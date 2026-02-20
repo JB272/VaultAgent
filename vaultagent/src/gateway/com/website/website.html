@@ -5,6 +5,7 @@
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
     <title>VaultAgent Chat</title>
     <link rel='stylesheet' href='/assets/website.css' />
+    <script src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'></script>
   </head>
   <body>
     <section class='chat-shell'>
@@ -26,23 +27,75 @@
       const composerEl = document.getElementById('composer');
       const inputEl = document.getElementById('messageInput');
 
-      function addBubble(message) {
+      // Markdown-Renderer konfigurieren
+      marked.setOptions({ breaks: true, gfm: true });
+
+      function renderMarkdown(text) {
+        try {
+          return marked.parse(text);
+        } catch (e) {
+          // Fallback: plain text mit HTML-Escaping
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+        }
+      }
+
+      // Verfolge letzten bekannten Stand um nur Deltas zu rendern
+      let lastMessageCount = 0;
+      let lastTypingState = false;
+      let lastStreamText = '';
+      let userIsScrolledUp = false;
+
+      // Scroll-Tracking: User hat manuell hochgescrollt?
+      messagesEl.addEventListener('scroll', () => {
+        const atBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
+        userIsScrolledUp = !atBottom;
+      });
+
+      function scrollToBottomIfNeeded() {
+        if (!userIsScrolledUp) {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      }
+
+      function createBubble(message) {
         const bubble = document.createElement('div');
         const sourceClass = message.source === 'you'
           ? 'you'
           : (message.source === 'assistant' ? 'assistant' : 'system');
         bubble.className = `bubble ${sourceClass}`;
-        bubble.textContent = message.text;
-        messagesEl.appendChild(bubble);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        if (sourceClass === 'assistant') {
+          bubble.innerHTML = renderMarkdown(message.text);
+          // Links in neuem Tab öffnen
+          bubble.querySelectorAll('a').forEach(a => {
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+          });
+        } else {
+          bubble.textContent = message.text;
+        }
+
+        return bubble;
       }
 
-      function addTypingBubble() {
+      function createTypingBubble() {
         const bubble = document.createElement('div');
         bubble.className = 'bubble system typing';
-        bubble.textContent = 'Assistant schreibt ...';
-        messagesEl.appendChild(bubble);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
+        bubble.id = 'typing-indicator';
+        bubble.innerHTML = '<span class="dot-pulse"></span> Assistant denkt nach...';
+        return bubble;
+      }
+
+      function removeTypingBubble() {
+        const existing = document.getElementById('typing-indicator');
+        if (existing) existing.remove();
+      }
+
+      function removeStreamBubble() {
+        const existing = document.getElementById('stream-bubble');
+        if (existing) existing.remove();
       }
 
       async function refreshMessages() {
@@ -50,13 +103,55 @@
         if (!response.ok) return;
         const data = await response.json();
 
-        while (messagesEl.lastChild) messagesEl.removeChild(messagesEl.lastChild);
-        addBubble({ text: 'Schreibe eine Nachricht, um sie als IncomingAction ans Gateway zu senden.', source: 'system' });
-        data.messages.forEach(addBubble);
-        if (data.assistant_stream_text) {
-          addBubble({ text: data.assistant_stream_text, source: 'assistant' });
+        const messages = data.messages || [];
+        let changed = false;
+
+        // Neue Nachrichten hinzufügen (Delta-Update)
+        if (messages.length !== lastMessageCount) {
+          // Typing/Stream entfernen bevor neue Nachrichten kommen
+          removeTypingBubble();
+          removeStreamBubble();
+
+          // Nur neue Nachrichten anhängen
+          const newMessages = messages.slice(lastMessageCount);
+          for (const msg of newMessages) {
+            messagesEl.appendChild(createBubble(msg));
+          }
+          lastMessageCount = messages.length;
+          changed = true;
         }
-        if (data.assistant_typing && !data.assistant_stream_text) addTypingBubble();
+
+        // Stream-Text aktualisieren
+        const streamText = data.assistant_stream_text || '';
+        if (streamText !== lastStreamText) {
+          removeStreamBubble();
+          if (streamText) {
+            const streamBubble = document.createElement('div');
+            streamBubble.className = 'bubble assistant streaming';
+            streamBubble.id = 'stream-bubble';
+            streamBubble.innerHTML = renderMarkdown(streamText);
+            streamBubble.querySelectorAll('a').forEach(a => {
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+            });
+            messagesEl.appendChild(streamBubble);
+          }
+          lastStreamText = streamText;
+          changed = true;
+        }
+
+        // Typing-Indicator
+        const shouldShowTyping = data.assistant_typing && !streamText;
+        if (shouldShowTyping !== lastTypingState) {
+          removeTypingBubble();
+          if (shouldShowTyping) {
+            messagesEl.appendChild(createTypingBubble());
+          }
+          lastTypingState = shouldShowTyping;
+          changed = true;
+        }
+
+        if (changed) scrollToBottomIfNeeded();
       }
 
       composerEl.addEventListener('submit', async (event) => {
@@ -72,11 +167,15 @@
 
         if (response.ok) {
           inputEl.value = '';
-          await refreshMessages();
+          // Optimistic: sofort anzeigen
+          messagesEl.appendChild(createBubble({ text, source: 'you' }));
+          lastMessageCount++;
+          userIsScrolledUp = false;
+          scrollToBottomIfNeeded();
         }
       });
 
-      setInterval(refreshMessages, 300);
+      setInterval(refreshMessages, 400);
       refreshMessages();
     </script>
   </body>

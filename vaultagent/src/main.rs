@@ -14,6 +14,7 @@ use skills::SkillRegistry;
 use skills::default_skills::memory_save::MemorySaveSkill;
 use skills::default_skills::memory_search::MemorySearchSkill;
 use skills::default_skills::read_file::ReadFileSkill;
+use skills::default_skills::web_search::WebSearchSkill;
 use skills::default_skills::write_file::WriteFileSkill;
 use skills::python_skill::load_python_skills;
 use soul::Soul;
@@ -37,6 +38,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Default Skills (Rust)
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+    skills.add(WebSearchSkill::new());
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
     skills.add(MemorySearchSkill::new(Arc::clone(&soul.memory)));
 

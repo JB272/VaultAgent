@@ -98,10 +98,7 @@ impl Memory {
 
         if needs_header {
             let date = Local::now().date_naive();
-            content.push_str(&format!(
-                "# Tageslog {}\n\n",
-                date.format("%d.%m.%Y")
-            ));
+            content.push_str(&format!("# Tageslog {}\n\n", date.format("%d.%m.%Y")));
         }
 
         let time = Local::now().format("%H:%M");
@@ -158,12 +155,7 @@ impl Memory {
         if let Ok(entries) = std::fs::read_dir(&memory_dir) {
             let mut files: Vec<_> = entries
                 .flatten()
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        == Some("md")
-                })
+                .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
                 .collect();
             files.sort_by_key(|e| e.file_name());
 
