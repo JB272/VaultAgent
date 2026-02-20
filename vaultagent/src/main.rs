@@ -16,6 +16,7 @@ use skills::SkillRegistry;
 use skills::default_skills::cron_add::CronAddSkill;
 use skills::default_skills::cron_list::CronListSkill;
 use skills::default_skills::cron_remove::CronRemoveSkill;
+use skills::default_skills::list_directory::ListDirectorySkill;
 use skills::default_skills::memory_save::MemorySaveSkill;
 use skills::default_skills::memory_search::MemorySearchSkill;
 use skills::default_skills::read_file::ReadFileSkill;
@@ -47,6 +48,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Default Skills (Rust)
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+    skills.add(ListDirectorySkill);
     skills.add(WebSearchSkill::new());
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
     skills.add(MemorySearchSkill::new(Arc::clone(&soul.memory)));
