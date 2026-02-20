@@ -20,6 +20,7 @@ pub struct TelegramBot {
     webhook_url: Option<String>,
     port: u16,
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
+    allowed_chat_ids: Option<HashSet<i64>>,
     transcription: Option<Arc<TranscriptionService>>,
 }
 
@@ -34,6 +35,7 @@ impl TelegramBot {
             webhook_url,
             port,
             known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
+            allowed_chat_ids: None,
             transcription: None,
         }
     }
@@ -54,6 +56,42 @@ impl TelegramBot {
 
         let mut bot = Self::new(token, webhook_url, port);
         bot.transcription = TranscriptionService::from_env().map(Arc::new);
+
+        // Erlaubte Chat-IDs laden: aus ENV + trusted_chat_ids.md
+        let mut allowed: HashSet<i64> = HashSet::new();
+
+        // 1) Aus Umgebungsvariable (kommasepariert)
+        if let Some(ids) = get_non_empty_env("TELEGRAM_ALLOWED_CHAT_IDS") {
+            for id in ids.split(',').filter_map(|s| s.trim().parse::<i64>().ok()) {
+                allowed.insert(id);
+            }
+        }
+
+        // 2) Aus trusted_chat_ids.md (eine ID pro Zeile, # = Kommentar)
+        let trusted_path = std::path::Path::new("trusted_chat_ids.md");
+        if trusted_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(trusted_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("<!--") {
+                        continue;
+                    }
+                    if let Ok(id) = trimmed.parse::<i64>() {
+                        allowed.insert(id);
+                    }
+                }
+            }
+        }
+
+        if !allowed.is_empty() {
+            println!("  Telegram: {} erlaubte Chat-ID(s)", allowed.len());
+            bot.allowed_chat_ids = Some(allowed);
+        } else {
+            println!(
+                "  Telegram: Keine Chat-ID-Einschränkung (weder ENV noch trusted_chat_ids.md gesetzt)"
+            );
+        }
+
         Some(bot)
     }
 
@@ -107,6 +145,17 @@ impl TelegramBot {
                                 offset = Some(update.update_id + 1);
 
                                 if let Some(ref message) = update.message {
+                                    // Chat-ID-Allowlist prüfen
+                                    if let Some(ref allowed) = bot.allowed_chat_ids {
+                                        if !allowed.contains(&message.chat.id) {
+                                            let _ = bot.send_message(
+                                                message.chat.id,
+                                                format!("⛔ Kein Zugriff. Deine Chat-ID: {}\nBitte den Bot-Admin, deine ID freizuschalten.", message.chat.id)
+                                            ).await;
+                                            continue;
+                                        }
+                                    }
+
                                     bot.known_chat_ids.lock().await.insert(message.chat.id);
 
                                     if let Some(text) =
@@ -429,6 +478,17 @@ async fn health() -> StatusCode {
 
 async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Update>) -> StatusCode {
     if let Some(ref message) = update.message {
+        // Chat-ID-Allowlist prüfen
+        if let Some(ref allowed) = state.bot.allowed_chat_ids {
+            if !allowed.contains(&message.chat.id) {
+                let _ = state.bot.send_message(
+                    message.chat.id,
+                    format!("⛔ Kein Zugriff. Deine Chat-ID: {}\nBitte den Bot-Admin, deine ID freizuschalten.", message.chat.id)
+                ).await;
+                return StatusCode::OK;
+            }
+        }
+
         // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
         state.known_chat_ids.lock().await.insert(message.chat.id);
 
