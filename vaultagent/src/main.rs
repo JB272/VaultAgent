@@ -1,6 +1,7 @@
 mod gateway;
 mod reasoning;
 mod skills;
+mod soul;
 
 use gateway::com::GatewayRegistry;
 use gateway::com::telegram::setup_telegram;
@@ -10,11 +11,15 @@ use reasoning::agent::Agent;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
+use skills::default_skills::memory_save::MemorySaveSkill;
+use skills::default_skills::memory_search::MemorySearchSkill;
 use skills::default_skills::read_file::ReadFileSkill;
 use skills::default_skills::write_file::WriteFileSkill;
 use skills::python_skill::load_python_skills;
+use soul::Soul;
 use std::error::Error;
 use std::path::Path;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -22,12 +27,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         let _ = dotenvy::from_filename("vaultagent/.env");
     }
 
+    // ── Soul (Persönlichkeit + Gedächtnis) ────────────
+    let soul_dir = std::env::var("SOUL_DIR").unwrap_or_else(|_| "soul".to_string());
+    let soul = Arc::new(Soul::load(Path::new(&soul_dir)));
+
     // ── Skills ──────────────────────────────────────────
     let mut skills = SkillRegistry::new();
 
     // Default Skills (Rust)
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+    skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
+    skills.add(MemorySearchSkill::new(Arc::clone(&soul.memory)));
 
     // Softcoded Skills (Python-Skripte aus skills/ Verzeichnis)
     let python_skills_dir =
@@ -49,7 +60,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     // ── Agent ───────────────────────────────────────────
-    let agent = Agent::new(llm, skills);
+    let agent = Agent::new(llm, skills, soul);
 
     // ── Incoming Queue ──────────────────────────────────
     let incoming = IncomingActionQueue::new();

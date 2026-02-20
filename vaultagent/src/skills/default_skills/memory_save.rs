@@ -1,0 +1,83 @@
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+use crate::reasoning::llm_interface::LlmToolDefinition;
+use crate::skills::Skill;
+use crate::soul::memory::Memory;
+
+/// Skill: Speichert einen Eintrag ins Tageslog oder Langzeitgedächtnis.
+pub struct MemorySaveSkill {
+    memory: Arc<Memory>,
+}
+
+impl MemorySaveSkill {
+    pub fn new(memory: Arc<Memory>) -> Self {
+        Self { memory }
+    }
+}
+
+#[async_trait]
+impl Skill for MemorySaveSkill {
+    fn definition(&self) -> LlmToolDefinition {
+        LlmToolDefinition {
+            name: "memory_save".to_string(),
+            description: Some(
+                "Speichert eine Erinnerung. Nutze 'daily' für kurzfristige Notizen \
+                 (Tageslog) oder 'long_term' für dauerhaft wichtige Fakten (MEMORY.md)."
+                    .to_string(),
+            ),
+            parameters_schema: json!({
+                "type": "object",
+                "properties": {
+                    "entry": {
+                        "type": "string",
+                        "description": "Der Text, der gespeichert werden soll."
+                    },
+                    "storage": {
+                        "type": "string",
+                        "enum": ["daily", "long_term"],
+                        "description": "Wo gespeichert wird: 'daily' = heutiges Tageslog, 'long_term' = MEMORY.md"
+                    }
+                },
+                "required": ["entry"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &Value) -> String {
+        let entry = arguments
+            .get("entry")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if entry.trim().is_empty() {
+            return json!({ "ok": false, "error": "Eintrag darf nicht leer sein." }).to_string();
+        }
+
+        let storage = arguments
+            .get("storage")
+            .and_then(Value::as_str)
+            .unwrap_or("daily");
+
+        let result = match storage {
+            "long_term" => self.memory.append_long_term(entry).await,
+            _ => self.memory.append_today(entry).await,
+        };
+
+        match result {
+            Ok(()) => json!({
+                "ok": true,
+                "storage": storage,
+                "message": format!("Erinnerung gespeichert ({}).", storage),
+            })
+            .to_string(),
+            Err(err) => json!({
+                "ok": false,
+                "error": err,
+            })
+            .to_string(),
+        }
+    }
+}
