@@ -66,10 +66,22 @@ impl Skill for CronAddSkill {
     }
 
     async fn execute(&self, arguments: &Value) -> String {
-        let name = arguments.get("name").and_then(Value::as_str).unwrap_or("Unnamed");
-        let prompt = arguments.get("prompt").and_then(Value::as_str).unwrap_or("");
-        let schedule_kind = arguments.get("schedule_kind").and_then(Value::as_str).unwrap_or("");
-        let chat_id = arguments.get("chat_id").and_then(Value::as_i64).unwrap_or(0);
+        let name = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Unnamed");
+        let prompt = arguments
+            .get("prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let schedule_kind = arguments
+            .get("schedule_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let chat_id = arguments
+            .get("chat_id")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
 
         if prompt.trim().is_empty() {
             return json!({ "ok": false, "error": "Prompt darf nicht leer sein." }).to_string();
@@ -88,12 +100,16 @@ impl Skill for CronAddSkill {
                         return json!({
                             "ok": false,
                             "error": format!("Ungültiges ISO-8601-Datum: '{}'", at_str)
-                        }).to_string();
+                        })
+                        .to_string();
                     }
                 }
             }
             "cron" => {
-                let expr = arguments.get("cron_expr").and_then(Value::as_str).unwrap_or("");
+                let expr = arguments
+                    .get("cron_expr")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if expr.is_empty() {
                     return json!({ "ok": false, "error": "cron_expr fehlt." }).to_string();
                 }
@@ -102,7 +118,8 @@ impl Skill for CronAddSkill {
                     return json!({
                         "ok": false,
                         "error": format!("Ungültiger Cron-Ausdruck: '{}'", expr)
-                    }).to_string();
+                    })
+                    .to_string();
                 }
                 Schedule::Cron {
                     expr: expr.to_string(),
@@ -113,7 +130,8 @@ impl Skill for CronAddSkill {
                 return json!({
                     "ok": false,
                     "error": "schedule_kind muss 'at' oder 'cron' sein."
-                }).to_string();
+                })
+                .to_string();
             }
         };
 
@@ -139,11 +157,13 @@ impl Skill for CronAddSkill {
                 "ok": true,
                 "job_id": job_id,
                 "message": format!("Job '{}' wurde erstellt.", job_name),
-            }).to_string(),
+            })
+            .to_string(),
             Err(err) => json!({
                 "ok": false,
                 "error": format!("Job konnte nicht gespeichert werden: {}", err),
-            }).to_string(),
+            })
+            .to_string(),
         }
     }
 }

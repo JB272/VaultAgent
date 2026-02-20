@@ -21,8 +21,12 @@ impl CronScheduler {
                 for job in &active {
                     let schedule_desc = match &job.schedule {
                         crate::cron::store::Schedule::At { at } => format!("einmalig um {}", at),
-                        crate::cron::store::Schedule::Every { every_secs } => format!("alle {}s", every_secs),
-                        crate::cron::store::Schedule::Cron { expr, .. } => format!("cron '{}'", expr),
+                        crate::cron::store::Schedule::Every { every_secs } => {
+                            format!("alle {}s", every_secs)
+                        }
+                        crate::cron::store::Schedule::Cron { expr, .. } => {
+                            format!("cron '{}'", expr)
+                        }
                     };
                     println!("    - \"{}\" ({})", job.name, schedule_desc);
                 }
