@@ -1,4 +1,4 @@
-use crate::gateway::com::{get_non_empty_env, is_token_service_enabled, Gateway};
+use crate::gateway::com::{Gateway, get_non_empty_env, is_token_service_enabled};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
 use async_trait::async_trait;
 use axum::{
@@ -9,32 +9,27 @@ use axum::{
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    error::Error,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct TelegramBot {
     client: Client,
     base_url: String,
-    webhook_url: String,
+    webhook_url: Option<String>,
     port: u16,
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl TelegramBot {
-    pub fn new(token: impl Into<String>, webhook_url: impl Into<String>, port: u16) -> Self {
+    pub fn new(token: impl Into<String>, webhook_url: Option<String>, port: u16) -> Self {
         let token = token.into();
         let base_url = format!("https://api.telegram.org/bot{}", token);
 
         Self {
             client: Client::new(),
             base_url,
-            webhook_url: webhook_url.into(),
+            webhook_url,
             port,
             known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -49,13 +44,6 @@ impl TelegramBot {
 
         let webhook_url = get_non_empty_env("TELEGRAM_WEBHOOK_URL");
 
-        let Some(webhook_url) = webhook_url else {
-            eprintln!(
-                "TELEGRAM_BOT_TOKEN ist gesetzt, aber TELEGRAM_WEBHOOK_URL fehlt. Telegram wird nicht gestartet."
-            );
-            return None;
-        };
-
         let port: u16 = std::env::var("PORT")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -68,34 +56,71 @@ impl TelegramBot {
         &self,
         incoming_writer: IncomingActionWriter,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
-        self.set_webhook(self.webhook_url.clone()).await?;
+        if let Some(ref webhook_url) = self.webhook_url {
+            // Webhook-Modus: öffentliche URL setzen und HTTP-Server starten
+            self.set_webhook(webhook_url.clone()).await?;
 
-        let app_state = AppState {
-            incoming_writer,
-            known_chat_ids: Arc::clone(&self.known_chat_ids),
-        };
-
-        let app = Router::new()
-            .route("/health", get(health))
-            .route("/telegram/webhook", post(telegram_webhook))
-            .with_state(app_state);
-
-        let address = SocketAddr::from(([0, 0, 0, 0], self.port));
-        println!("Webhook server läuft auf {}", address);
-
-        tokio::spawn(async move {
-            let listener = match tokio::net::TcpListener::bind(address).await {
-                Ok(value) => value,
-                Err(err) => {
-                    eprintln!("Fehler beim Binden des Webhook-Ports: {}", err);
-                    return;
-                }
+            let app_state = AppState {
+                incoming_writer,
+                known_chat_ids: Arc::clone(&self.known_chat_ids),
             };
 
-            if let Err(err) = axum::serve(listener, app).await {
-                eprintln!("Webhook-Server ist mit Fehler beendet: {}", err);
-            }
-        });
+            let app = Router::new()
+                .route("/health", get(health))
+                .route("/telegram/webhook", post(telegram_webhook))
+                .with_state(app_state);
+
+            let address = SocketAddr::from(([0, 0, 0, 0], self.port));
+            println!("  Telegram Webhook-Server läuft auf {}", address);
+
+            tokio::spawn(async move {
+                let listener = match tokio::net::TcpListener::bind(address).await {
+                    Ok(value) => value,
+                    Err(err) => {
+                        eprintln!("Fehler beim Binden des Webhook-Ports: {}", err);
+                        return;
+                    }
+                };
+
+                if let Err(err) = axum::serve(listener, app).await {
+                    eprintln!("Webhook-Server ist mit Fehler beendet: {}", err);
+                }
+            });
+        } else {
+            // Polling-Modus: Webhook löschen und long-polling starten
+            self.delete_webhook().await?;
+            println!("  Telegram Polling-Modus aktiv");
+
+            let bot = self.clone();
+            tokio::spawn(async move {
+                let mut offset: Option<i64> = None;
+                loop {
+                    match bot.get_updates(offset, Some(30)).await {
+                        Ok(updates) => {
+                            for update in updates {
+                                offset = Some(update.update_id + 1);
+
+                                if let Some(ref message) = update.message {
+                                    bot.known_chat_ids.lock().await.insert(message.chat.id);
+
+                                    if let Some(ref text) = message.text {
+                                        let action = IncomingAction::Chat(ChatAction {
+                                            chat_id: message.chat.id,
+                                            text: text.clone(),
+                                        });
+                                        incoming_writer.push(action).await;
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("Telegram Polling-Fehler: {}. Retry in 5s…", err);
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(())
     }
@@ -215,6 +240,27 @@ impl TelegramBot {
         } else {
             Err("Telegram API could not set webhook".into())
         }
+    }
+
+    pub async fn delete_webhook(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let request = SetWebhookRequest { url: String::new() };
+
+        let response = self
+            .client
+            .post(format!("{}/setWebhook", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<bool> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+
+        Ok(())
     }
 }
 

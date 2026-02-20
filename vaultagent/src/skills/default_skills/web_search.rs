@@ -74,7 +74,10 @@ impl WebSearchSkill {
         }
 
         // Related Topics (inkl. verschachtelter Gruppen)
-        for topic in flatten_related_topics(&ddg.related_topics).into_iter().take(6) {
+        for topic in flatten_related_topics(&ddg.related_topics)
+            .into_iter()
+            .take(6)
+        {
             if !topic.text.is_empty() {
                 results.push(json!({
                     "type": "related",

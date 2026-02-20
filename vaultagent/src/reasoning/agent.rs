@@ -35,7 +35,9 @@ impl Agent {
     /// Verarbeitet eine Chat-Nachricht und gibt die Antwort des Agenten zurück.
     /// Führt bei Bedarf bis zu `max_rounds` Tool-Aufrufe-Zyklen durch.
     /// Die Conversation-History bleibt über Aufrufe hinweg erhalten.
-    pub async fn process(&self, user_text: &str) -> String {
+    /// `chat_id` wird als Kontext mitgegeben, damit Skills wie cron_add wissen,
+    /// an welchen Chat die Antwort gehen soll.
+    pub async fn process(&self, user_text: &str, chat_id: i64) -> String {
         let Some(llm) = &self.llm else {
             return "LLM ist nicht konfiguriert. Setze LLM_API_KEY, um Antworten zu erhalten."
                 .to_string();
@@ -60,7 +62,11 @@ impl Agent {
         }
 
         // System-Prompt dynamisch aus Soul bauen (Persönlichkeit + Memory-Kontext)
-        let system_prompt = self.soul.system_prompt();
+        let base_prompt = self.soul.system_prompt();
+        let system_prompt = format!(
+            "{}\n\n## Aktuelle Session\n- Chat-ID: {}\n- Wenn du cron_add aufrufst, verwende diese chat_id.",
+            base_prompt, chat_id
+        );
 
         let mut messages = vec![LlmMessage {
             role: LlmRole::Developer,

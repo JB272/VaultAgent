@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
-use crate::reasoning::llm_interface::LlmToolDefinition;
 use super::Skill;
+use crate::reasoning::llm_interface::LlmToolDefinition;
 
 /// Ein Skill, der durch ein externes Python-Skript implementiert wird.
 ///
@@ -112,8 +112,7 @@ impl Skill for PythonSkill {
 
         println!(
             "[python_skill:{}] --execute args: {}",
-            self.definition.name,
-            args_json
+            self.definition.name, args_json
         );
 
         let result = Command::new("python3")
@@ -167,13 +166,11 @@ impl Skill for PythonSkill {
                     .to_string()
                 }
             }
-            Err(err) => {
-                json!({
-                    "ok": false,
-                    "error": format!("Konnte Skript nicht starten: {}", err),
-                })
-                .to_string()
-            }
+            Err(err) => json!({
+                "ok": false,
+                "error": format!("Konnte Skript nicht starten: {}", err),
+            })
+            .to_string(),
         }
     }
 }

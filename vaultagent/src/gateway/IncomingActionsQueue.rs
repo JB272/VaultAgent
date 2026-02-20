@@ -63,7 +63,7 @@ impl IncomingActionWriter {
 pub enum IncomingAction {
     Chat(ChatAction),
     Agent(AgentAction),
-    Chron(ChronAction),
+    Cron(ChronAction),
 }
 
 #[derive(Debug, Clone)]
@@ -76,4 +76,8 @@ pub struct ChatAction {
 pub struct AgentAction;
 
 #[derive(Debug, Clone)]
-pub struct ChronAction;
+pub struct ChronAction {
+    pub chat_id: i64,
+    pub prompt: String,
+    pub job_name: String,
+}
