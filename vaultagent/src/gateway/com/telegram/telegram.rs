@@ -109,7 +109,9 @@ impl TelegramBot {
                                 if let Some(ref message) = update.message {
                                     bot.known_chat_ids.lock().await.insert(message.chat.id);
 
-                                    if let Some(text) = extract_text_or_transcribe(&bot, message).await {
+                                    if let Some(text) =
+                                        extract_text_or_transcribe(&bot, message).await
+                                    {
                                         let action = IncomingAction::Chat(ChatAction {
                                             chat_id: message.chat.id,
                                             text,
@@ -249,7 +251,10 @@ impl TelegramBot {
     }
 
     /// Ruft die Dateiinfo ab (file_path) für einen gegebenen file_id.
-    pub async fn get_file_path(&self, file_id: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+    pub async fn get_file_path(
+        &self,
+        file_id: &str,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
         let response = self
             .client
             .post(format!("{}/getFile", self.base_url))
@@ -259,7 +264,10 @@ impl TelegramBot {
 
         let body: ApiResponse<TelegramFile> = response.json().await?;
         if !body.ok {
-            return Err(body.description.unwrap_or("getFile fehlgeschlagen".to_string()).into());
+            return Err(body
+                .description
+                .unwrap_or("getFile fehlgeschlagen".to_string())
+                .into());
         }
 
         body.result
@@ -268,7 +276,10 @@ impl TelegramBot {
     }
 
     /// Lädt eine Datei von den Telegram-Servern herunter.
-    pub async fn download_file(&self, file_path: &str) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    pub async fn download_file(
+        &self,
+        file_path: &str,
+    ) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
         // base_url is "https://api.telegram.org/bot<token>"
         // file download is "https://api.telegram.org/file/bot<token>/<file_path>"
         let download_url = self.base_url.replace("/bot", "/file/bot");

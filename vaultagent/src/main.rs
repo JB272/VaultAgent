@@ -114,8 +114,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     cron_action.job_name, cron_action.chat_id
                 );
 
+                // WICHTIG: Den Prompt so formulieren, dass der Agent weiß,
+                // dass dies EINE AUSGELÖSTE ERINNERUNG ist, nicht eine neue Anfrage.
+                let cron_prompt = format!(
+                    "[SYSTEM: Dies ist eine geplante Erinnerung/Aufgabe mit dem Namen '{}', \
+                     die jetzt ausgelöst wurde. Führe die folgende Aufgabe AUS und antworte \
+                     dem Nutzer direkt mit dem Ergebnis. Erstelle KEINE neue Erinnerung, \
+                     sondern liefere die Antwort/Erinnerung direkt ab.]\n\n{}",
+                    cron_action.job_name, cron_action.prompt
+                );
+
                 gateways.broadcast_typing(cron_action.chat_id, true).await;
-                let reply = agent.process(&cron_action.prompt, cron_action.chat_id).await;
+                let reply = agent.process(&cron_prompt, cron_action.chat_id).await;
                 gateways
                     .broadcast_reply(cron_action.chat_id, &reply)
                     .await;

@@ -27,7 +27,11 @@ impl Skill for CronAddSkill {
             description: Some(
                 "Plant eine zeitgesteuerte Aufgabe. Der Agent wird zum geplanten Zeitpunkt \
                  mit dem angegebenen Prompt geweckt und die Antwort wird im Chat angezeigt. \
-                 Nutze dies für Erinnerungen, tägliche Zusammenfassungen, Wetterberichte etc."
+                 Nutze dies für Erinnerungen, tägliche Zusammenfassungen, Wetterberichte etc.\n\
+                 WICHTIG zum Prompt: Formuliere den Prompt als DIREKTE AUFGABE für den Zeitpunkt \
+                 der Ausführung, z.B. 'Sag dem Nutzer, dass er jetzt das Fenster schließen soll.' \
+                 oder 'Fasse die Wetterlage in Berlin zusammen.' \
+                 NICHT als Erinnerungs-Anfrage wie 'Erinnere mich an...'."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -95,7 +99,17 @@ impl Skill for CronAddSkill {
             "at" => {
                 let at_str = arguments.get("at").and_then(Value::as_str).unwrap_or("");
                 match at_str.parse::<DateTime<Utc>>() {
-                    Ok(at) => Schedule::At { at },
+                    Ok(at) => {
+                        // Keine Jobs in der Vergangenheit akzeptieren
+                        if at < Utc::now() {
+                            return json!({
+                                "ok": false,
+                                "error": format!("Der Zeitpunkt '{}' liegt in der Vergangenheit. Bitte einen zukünftigen Zeitpunkt wählen.", at_str)
+                            })
+                            .to_string();
+                        }
+                        Schedule::At { at }
+                    }
                     Err(_) => {
                         return json!({
                             "ok": false,
