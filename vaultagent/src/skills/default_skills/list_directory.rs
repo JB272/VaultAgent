@@ -33,10 +33,7 @@ impl Skill for ListDirectorySkill {
     }
 
     async fn execute(&self, arguments: &Value) -> String {
-        let path = arguments
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or(".");
+        let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
 
         let safe_path = match sanitize_relative_path(path) {
             Ok(p) => p,
