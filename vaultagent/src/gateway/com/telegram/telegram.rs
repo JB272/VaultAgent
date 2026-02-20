@@ -1,5 +1,6 @@
-use crate::gateway::com::{get_non_empty_env, is_token_service_enabled};
+use crate::gateway::com::{get_non_empty_env, is_token_service_enabled, Gateway};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
+use async_trait::async_trait;
 use axum::{
     Router,
     extract::{Json, State},
@@ -8,7 +9,13 @@ use axum::{
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{error::Error, net::SocketAddr};
+use std::{
+    collections::HashSet,
+    error::Error,
+    net::SocketAddr,
+    sync::Arc,
+};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct TelegramBot {
@@ -16,6 +23,7 @@ pub struct TelegramBot {
     base_url: String,
     webhook_url: String,
     port: u16,
+    known_chat_ids: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl TelegramBot {
@@ -28,6 +36,7 @@ impl TelegramBot {
             base_url,
             webhook_url: webhook_url.into(),
             port,
+            known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -61,7 +70,10 @@ impl TelegramBot {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.set_webhook(self.webhook_url.clone()).await?;
 
-        let app_state = AppState { incoming_writer };
+        let app_state = AppState {
+            incoming_writer,
+            known_chat_ids: Arc::clone(&self.known_chat_ids),
+        };
 
         let app = Router::new()
             .route("/health", get(health))
@@ -229,9 +241,40 @@ pub async fn setup_telegram(incoming_writer: IncomingActionWriter) -> Option<Tel
     }
 }
 
+#[async_trait]
+impl Gateway for TelegramBot {
+    fn name(&self) -> &str {
+        "telegram"
+    }
+
+    async fn send_reply(
+        &self,
+        chat_id: i64,
+        text: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if !self.known_chat_ids.lock().await.contains(&chat_id) {
+            return Ok(()); // Nicht unser Chat
+        }
+        self.send_message(chat_id, text).await?;
+        Ok(())
+    }
+
+    async fn notify_typing(
+        &self,
+        chat_id: i64,
+        typing: bool,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if !typing || !self.known_chat_ids.lock().await.contains(&chat_id) {
+            return Ok(());
+        }
+        self.send_chat_action(chat_id, "typing").await
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     incoming_writer: IncomingActionWriter,
+    known_chat_ids: Arc<Mutex<HashSet<i64>>>,
 }
 
 async fn health() -> StatusCode {
@@ -240,6 +283,9 @@ async fn health() -> StatusCode {
 
 async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Update>) -> StatusCode {
     if let Some(message) = update.message {
+        // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
+        state.known_chat_ids.lock().await.insert(message.chat.id);
+
         if let Some(text) = message.text {
             let action = IncomingAction::Chat(ChatAction {
                 chat_id: message.chat.id,

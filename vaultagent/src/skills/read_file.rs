@@ -1,26 +1,60 @@
-use serde_json::json;
+use async_trait::async_trait;
+use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
 
-pub async fn execute(path: &str) -> String {
-    match sanitize_relative_path(path) {
-        Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
-            Ok(content) => json!({
-                "ok": true,
-                "path": safe_path.to_string_lossy(),
-                "content": content,
-            })
-            .to_string(),
+use crate::reasoning::llm_interface::LlmToolDefinition;
+use super::Skill;
+
+pub struct ReadFileSkill;
+
+#[async_trait]
+impl Skill for ReadFileSkill {
+    fn definition(&self) -> LlmToolDefinition {
+        LlmToolDefinition {
+            name: "read_file".to_string(),
+            description: Some(
+                "Liest eine Textdatei aus einem relativen Pfad im Workspace.".to_string(),
+            ),
+            parameters_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relativer Dateipfad, z.B. notes/test.txt"
+                    }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &Value) -> String {
+        let path = arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        match sanitize_relative_path(path) {
+            Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
+                Ok(content) => json!({
+                    "ok": true,
+                    "path": safe_path.to_string_lossy(),
+                    "content": content,
+                })
+                .to_string(),
+                Err(err) => json!({
+                    "ok": false,
+                    "error": format!("Datei konnte nicht gelesen werden: {}", err),
+                })
+                .to_string(),
+            },
             Err(err) => json!({
                 "ok": false,
-                "error": format!("Datei konnte nicht gelesen werden: {}", err),
+                "error": err,
             })
             .to_string(),
-        },
-        Err(err) => json!({
-            "ok": false,
-            "error": err,
-        })
-        .to_string(),
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
+use async_trait::async_trait;
 use axum::{
     Json, Router,
     extract::State,
@@ -11,6 +12,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
+
+use super::Gateway;
 
 #[derive(Debug, Clone)]
 pub struct WebsiteGateway {
@@ -157,6 +160,31 @@ impl WebsiteClient {
 
     pub fn streaming_base_url(&self) -> String {
         self.base_url.clone()
+    }
+}
+
+#[async_trait]
+impl Gateway for WebsiteClient {
+    fn name(&self) -> &str {
+        "website"
+    }
+
+    async fn send_reply(
+        &self,
+        _chat_id: i64,
+        text: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.push_assistant_message(text).await?;
+        Ok(())
+    }
+
+    async fn notify_typing(
+        &self,
+        _chat_id: i64,
+        typing: bool,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.set_typing(typing).await?;
+        Ok(())
     }
 }
 

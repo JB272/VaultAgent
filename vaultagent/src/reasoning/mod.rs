@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod llm_interface;
 
 #[path = "llmApis/mod.rs"]
