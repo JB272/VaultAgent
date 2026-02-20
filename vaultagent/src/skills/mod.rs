@@ -25,9 +25,7 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     pub fn new() -> Self {
-        Self {
-            skills: Vec::new(),
-        }
+        Self { skills: Vec::new() }
     }
 
     /// Skill registrieren – Builder-Pattern, gibt `&mut Self` zurück.
