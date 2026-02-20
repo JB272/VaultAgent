@@ -46,6 +46,23 @@ impl PythonSkill {
             .await
             .map_err(|e| format!("Konnte Python-Skill nicht starten: {}", e))?;
 
+        let describe_stdout = String::from_utf8_lossy(&output.stdout);
+        let describe_stderr = String::from_utf8_lossy(&output.stderr);
+        if !describe_stdout.trim().is_empty() {
+            println!(
+                "[python_skill:{}] --describe stdout: {}",
+                script_path.display(),
+                describe_stdout.trim()
+            );
+        }
+        if !describe_stderr.trim().is_empty() {
+            eprintln!(
+                "[python_skill:{}] --describe stderr: {}",
+                script_path.display(),
+                describe_stderr.trim()
+            );
+        }
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
@@ -93,6 +110,12 @@ impl Skill for PythonSkill {
     async fn execute(&self, arguments: &Value) -> String {
         let args_json = arguments.to_string();
 
+        println!(
+            "[python_skill:{}] --execute args: {}",
+            self.definition.name,
+            args_json
+        );
+
         let result = Command::new("python3")
             .arg(&self.script_path)
             .arg("--execute")
@@ -102,8 +125,25 @@ impl Skill for PythonSkill {
 
         match result {
             Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if !stdout.trim().is_empty() {
+                    println!(
+                        "[python_skill:{}] stdout: {}",
+                        self.definition.name,
+                        stdout.trim()
+                    );
+                }
+                if !stderr.trim().is_empty() {
+                    eprintln!(
+                        "[python_skill:{}] stderr: {}",
+                        self.definition.name,
+                        stderr.trim()
+                    );
+                }
+
                 if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
                     let trimmed = stdout.trim();
 
                     // Validieren, dass es gültiges JSON ist – falls nicht,
@@ -118,8 +158,6 @@ impl Skill for PythonSkill {
                         .to_string()
                     }
                 } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
                     json!({
                         "ok": false,
                         "error": format!("Skript beendet mit Code {:?}", output.status.code()),

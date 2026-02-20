@@ -24,15 +24,16 @@ impl WebSearchSkill {
 
     /// DuckDuckGo Instant Answer API abfragen.
     async fn search_ddg(&self, query: &str) -> String {
+        println!("[web_search] Suche gestartet: {}", query);
         let url = format!(
-            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+            "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=0",
             urlencoding::encode(query)
         );
 
         let response = match self.client.get(&url).send().await {
             Ok(r) => r,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string()
+                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string();
             }
         };
 
@@ -40,7 +41,7 @@ impl WebSearchSkill {
             Ok(t) => t,
             Err(e) => {
                 return json!({ "ok": false, "error": format!("Body lesen fehlgeschlagen: {}", e) })
-                    .to_string()
+                    .to_string();
             }
         };
 
@@ -48,7 +49,7 @@ impl WebSearchSkill {
             Ok(r) => r,
             Err(e) => {
                 return json!({ "ok": false, "error": format!("JSON-Parse-Fehler: {}", e) })
-                    .to_string()
+                    .to_string();
             }
         };
 
@@ -72,8 +73,8 @@ impl WebSearchSkill {
             }));
         }
 
-        // Related Topics
-        for topic in ddg.related_topics.iter().take(5) {
+        // Related Topics (inkl. verschachtelter Gruppen)
+        for topic in flatten_related_topics(&ddg.related_topics).into_iter().take(6) {
             if !topic.text.is_empty() {
                 results.push(json!({
                     "type": "related",
@@ -95,13 +96,31 @@ impl WebSearchSkill {
         }
 
         if results.is_empty() {
-            json!({
-                "ok": true,
-                "results": [],
-                "message": format!("Keine Ergebnisse für '{}'. Versuche eine andere Formulierung oder nutze eine URL direkt.", query),
-            })
-            .to_string()
+            let html_fallback = self.search_ddg_html(query).await;
+            if !html_fallback.is_empty() {
+                println!(
+                    "[web_search] API leer, HTML-Fallback lieferte {} Treffer",
+                    html_fallback.len()
+                );
+                json!({
+                    "ok": true,
+                    "query": query,
+                    "count": html_fallback.len(),
+                    "results": html_fallback,
+                    "source": "duckduckgo_html_fallback"
+                })
+                .to_string()
+            } else {
+                println!("[web_search] Keine Treffer für: {}", query);
+                json!({
+                    "ok": true,
+                    "results": [],
+                    "message": format!("Keine Ergebnisse für '{}'. Versuche eine andere Formulierung oder nutze eine URL direkt.", query),
+                })
+                .to_string()
+            }
         } else {
+            println!("[web_search] {} Treffer über API", results.len());
             json!({
                 "ok": true,
                 "query": query,
@@ -112,12 +131,31 @@ impl WebSearchSkill {
         }
     }
 
+    async fn search_ddg_html(&self, query: &str) -> Vec<Value> {
+        let url = format!(
+            "https://html.duckduckgo.com/html/?q={}",
+            urlencoding::encode(query)
+        );
+
+        let response = match self.client.get(&url).send().await {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let body = match response.text().await {
+            Ok(t) => t,
+            Err(_) => return Vec::new(),
+        };
+
+        extract_html_results(&body, 6)
+    }
+
     /// Eine URL abrufen und den Textinhalt extrahieren.
     async fn fetch_url(&self, url: &str) -> String {
         let response = match self.client.get(url).send().await {
             Ok(r) => r,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string()
+                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string();
             }
         };
 
@@ -134,7 +172,7 @@ impl WebSearchSkill {
             Ok(t) => t,
             Err(e) => {
                 return json!({ "ok": false, "error": format!("Body lesen fehlgeschlagen: {}", e) })
-                    .to_string()
+                    .to_string();
             }
         };
 
@@ -143,7 +181,11 @@ impl WebSearchSkill {
 
         // Auf vernünftige Länge kürzen (max ~4000 Zeichen)
         let truncated = if text.len() > 4000 {
-            format!("{}...\n[gekürzt, {} Zeichen gesamt]", &text[..4000], text.len())
+            format!(
+                "{}...\n[gekürzt, {} Zeichen gesamt]",
+                &text[..4000],
+                text.len()
+            )
         } else {
             text
         };
@@ -289,6 +331,86 @@ fn starts_with_at(chars: &[char], pos: usize, needle: &str) -> bool {
     true
 }
 
+fn flatten_related_topics(items: &[DdgTopicEntry]) -> Vec<DdgTopic> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            DdgTopicEntry::Topic(topic) => out.push(topic.clone()),
+            DdgTopicEntry::Group(group) => {
+                for topic in &group.topics {
+                    out.push(topic.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn extract_html_results(html: &str, max_results: usize) -> Vec<Value> {
+    let mut results = Vec::new();
+    let mut cursor = 0usize;
+
+    while let Some(pos) = html[cursor..].find("result__a") {
+        if results.len() >= max_results {
+            break;
+        }
+
+        let start = cursor + pos;
+        let anchor_start = match html[..start].rfind("<a ") {
+            Some(v) => v,
+            None => {
+                cursor = start + "result__a".len();
+                continue;
+            }
+        };
+
+        let href = match extract_attr_value(&html[anchor_start..], "href") {
+            Some(v) => v,
+            None => {
+                cursor = start + "result__a".len();
+                continue;
+            }
+        };
+
+        let gt_pos = match html[anchor_start..].find('>') {
+            Some(v) => anchor_start + v + 1,
+            None => break,
+        };
+
+        let end_tag = match html[gt_pos..].find("</a>") {
+            Some(v) => gt_pos + v,
+            None => break,
+        };
+
+        let raw_title = &html[gt_pos..end_tag];
+        let title = strip_html(raw_title);
+        if !title.is_empty() && !href.is_empty() {
+            results.push(json!({
+                "type": "result",
+                "text": title,
+                "url": href,
+            }));
+        }
+
+        cursor = end_tag + 4;
+    }
+
+    results
+}
+
+fn extract_attr_value(fragment: &str, attr: &str) -> Option<String> {
+    let needle = format!("{}=\"", attr);
+    let start = fragment.find(&needle)? + needle.len();
+    let end = fragment[start..].find('"')? + start;
+    let value = &fragment[start..end];
+    Some(
+        value
+            .replace("&amp;", "&")
+            .replace("&#x2F;", "/")
+            .replace("&#47;", "/"),
+    )
+}
+
 // ── DuckDuckGo API Structs ──────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -302,15 +424,28 @@ struct DdgResponse {
     #[serde(rename = "Answer", default)]
     answer: String,
     #[serde(rename = "RelatedTopics", default)]
-    related_topics: Vec<DdgTopic>,
+    related_topics: Vec<DdgTopicEntry>,
     #[serde(rename = "Results", default)]
     results: Vec<DdgTopic>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct DdgTopic {
     #[serde(rename = "Text", default)]
     text: String,
     #[serde(rename = "FirstURL", default)]
     first_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum DdgTopicEntry {
+    Topic(DdgTopic),
+    Group(DdgTopicGroup),
+}
+
+#[derive(Debug, Deserialize)]
+struct DdgTopicGroup {
+    #[serde(rename = "Topics", default)]
+    topics: Vec<DdgTopic>,
 }
