@@ -1,16 +1,16 @@
 [
   {
-    "id": "43b9f1af-856a-4c80-adbb-89fedb99df90",
-    "name": "Erinnerung Jacke packen",
+    "id": "c2f267cc-660b-4522-9512-6c3e9f45f44b",
+    "name": "Fenster schließen",
     "schedule": {
       "kind": "at",
-      "at": "2026-02-20T18:33:00Z"
+      "at": "2026-02-20T18:38:00Z"
     },
-    "prompt": "Erinnere mich daran, die Jacke einzupacken.",
+    "prompt": "Erinnere mich daran, das Fenster zu schließen!",
     "chat_id": 7896664173,
     "enabled": true,
     "delete_after_run": true,
     "last_run": null,
-    "created_at": "2026-02-20T18:31:12.968992Z"
+    "created_at": "2026-02-20T18:38:14.141172Z"
   }
 ]

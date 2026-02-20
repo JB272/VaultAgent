@@ -1,5 +1,6 @@
 use crate::gateway::com::{Gateway, get_non_empty_env, is_token_service_enabled};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
+use crate::reasoning::transcription::TranscriptionService;
 use async_trait::async_trait;
 use axum::{
     Router,
@@ -19,6 +20,7 @@ pub struct TelegramBot {
     webhook_url: Option<String>,
     port: u16,
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
+    transcription: Option<Arc<TranscriptionService>>,
 }
 
 impl TelegramBot {
@@ -32,6 +34,7 @@ impl TelegramBot {
             webhook_url,
             port,
             known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
+            transcription: None,
         }
     }
 
@@ -49,7 +52,9 @@ impl TelegramBot {
             .and_then(|value| value.parse().ok())
             .unwrap_or(8080);
 
-        Some(Self::new(token, webhook_url, port))
+        let mut bot = Self::new(token, webhook_url, port);
+        bot.transcription = TranscriptionService::from_env().map(Arc::new);
+        Some(bot)
     }
 
     pub async fn start(
@@ -63,6 +68,7 @@ impl TelegramBot {
             let app_state = AppState {
                 incoming_writer,
                 known_chat_ids: Arc::clone(&self.known_chat_ids),
+                bot: self.clone(),
             };
 
             let app = Router::new()
@@ -103,10 +109,10 @@ impl TelegramBot {
                                 if let Some(ref message) = update.message {
                                     bot.known_chat_ids.lock().await.insert(message.chat.id);
 
-                                    if let Some(ref text) = message.text {
+                                    if let Some(text) = extract_text_or_transcribe(&bot, message).await {
                                         let action = IncomingAction::Chat(ChatAction {
                                             chat_id: message.chat.id,
-                                            text: text.clone(),
+                                            text,
                                         });
                                         incoming_writer.push(action).await;
                                     }
@@ -242,6 +248,40 @@ impl TelegramBot {
         }
     }
 
+    /// Ruft die Dateiinfo ab (file_path) für einen gegebenen file_id.
+    pub async fn get_file_path(&self, file_id: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+        let response = self
+            .client
+            .post(format!("{}/getFile", self.base_url))
+            .json(&serde_json::json!({ "file_id": file_id }))
+            .send()
+            .await?;
+
+        let body: ApiResponse<TelegramFile> = response.json().await?;
+        if !body.ok {
+            return Err(body.description.unwrap_or("getFile fehlgeschlagen".to_string()).into());
+        }
+
+        body.result
+            .and_then(|f| f.file_path)
+            .ok_or_else(|| "Kein file_path in der Antwort".into())
+    }
+
+    /// Lädt eine Datei von den Telegram-Servern herunter.
+    pub async fn download_file(&self, file_path: &str) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+        // base_url is "https://api.telegram.org/bot<token>"
+        // file download is "https://api.telegram.org/file/bot<token>/<file_path>"
+        let download_url = self.base_url.replace("/bot", "/file/bot");
+        let url = format!("{}/{}", download_url, file_path);
+
+        let response = self.client.get(&url).send().await?;
+        if !response.status().is_success() {
+            return Err(format!("Download fehlgeschlagen: {}", response.status()).into());
+        }
+
+        Ok(response.bytes().await?.to_vec())
+    }
+
     pub async fn delete_webhook(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let request = SetWebhookRequest { url: String::new() };
 
@@ -317,10 +357,59 @@ impl Gateway for TelegramBot {
     }
 }
 
+/// Extrahiert Text aus einer Nachricht – entweder direkt oder durch Transkription von Voice/Audio.
+async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Option<String> {
+    // 1) Normale Textnachricht
+    if let Some(ref text) = message.text {
+        return Some(text.clone());
+    }
+
+    // 2) Voice-Memo oder Audio-Datei → transkribieren
+    let audio_info = message.voice.as_ref().or(message.audio.as_ref())?;
+    let transcription_service = bot.transcription.as_ref()?;
+
+    let mime = audio_info.mime_type.as_deref();
+
+    match bot.get_file_path(&audio_info.file_id).await {
+        Ok(file_path) => match bot.download_file(&file_path).await {
+            Ok(data) => {
+                println!(
+                    "Sprachnachricht empfangen ({} Bytes, {:?}), transkribiere…",
+                    data.len(),
+                    mime
+                );
+                match transcription_service.transcribe(data, mime).await {
+                    Ok(text) if !text.trim().is_empty() => {
+                        println!("Transkription: {}", text);
+                        Some(format!("[Sprachnachricht] {}", text))
+                    }
+                    Ok(_) => {
+                        eprintln!("Transkription ergab leeren Text.");
+                        None
+                    }
+                    Err(err) => {
+                        eprintln!("Transkriptions-Fehler: {}", err);
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Fehler beim Download der Audio-Datei: {}", err);
+                None
+            }
+        },
+        Err(err) => {
+            eprintln!("Fehler beim Abrufen des file_path: {}", err);
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     incoming_writer: IncomingActionWriter,
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
+    bot: TelegramBot,
 }
 
 async fn health() -> StatusCode {
@@ -328,11 +417,11 @@ async fn health() -> StatusCode {
 }
 
 async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Update>) -> StatusCode {
-    if let Some(message) = update.message {
+    if let Some(ref message) = update.message {
         // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
         state.known_chat_ids.lock().await.insert(message.chat.id);
 
-        if let Some(text) = message.text {
+        if let Some(text) = extract_text_or_transcribe(&state.bot, message).await {
             let action = IncomingAction::Chat(ChatAction {
                 chat_id: message.chat.id,
                 text,
@@ -378,6 +467,12 @@ struct SetWebhookRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct TelegramFile {
+    file_id: String,
+    file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct Update {
     pub update_id: i64,
     pub message: Option<Message>,
@@ -388,6 +483,16 @@ pub struct Message {
     pub message_id: i64,
     pub text: Option<String>,
     pub chat: Chat,
+    pub voice: Option<Audio>,
+    pub audio: Option<Audio>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Audio {
+    pub file_id: String,
+    pub duration: Option<u64>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
