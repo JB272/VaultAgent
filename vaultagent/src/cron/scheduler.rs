@@ -11,6 +11,24 @@ impl CronScheduler {
     /// Startet den Scheduler als Background-Task.
     /// Prüft alle 5 Sekunden auf fällige Jobs.
     pub fn start(store: Arc<CronStore>, writer: IncomingActionWriter) {
+        // Beim Start anstehende Jobs loggen
+        let store_clone = Arc::clone(&store);
+        tokio::spawn(async move {
+            let jobs = store_clone.list().await;
+            let active: Vec<_> = jobs.iter().filter(|j| j.enabled).collect();
+            if !active.is_empty() {
+                println!("  Cron: {} aktive(r) Job(s):", active.len());
+                for job in &active {
+                    let schedule_desc = match &job.schedule {
+                        crate::cron::store::Schedule::At { at } => format!("einmalig um {}", at),
+                        crate::cron::store::Schedule::Every { every_secs } => format!("alle {}s", every_secs),
+                        crate::cron::store::Schedule::Cron { expr, .. } => format!("cron '{}'", expr),
+                    };
+                    println!("    - \"{}\" ({})", job.name, schedule_desc);
+                }
+            }
+        });
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
@@ -19,7 +37,7 @@ impl CronScheduler {
                 let due_jobs = store.take_due_jobs(now).await;
                 for job in due_jobs {
                     println!(
-                        "  Cron feuert: \"{}\" → Chat {} | Prompt: {}",
+                        "⏰ Cron feuert: \"{}\" → Chat {} | Prompt: {}",
                         job.name,
                         job.chat_id,
                         if job.prompt.len() > 60 {

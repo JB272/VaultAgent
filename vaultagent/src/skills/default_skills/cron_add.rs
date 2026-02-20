@@ -48,7 +48,7 @@ impl Skill for CronAddSkill {
                     },
                     "at": {
                         "type": "string",
-                        "description": "Nur bei schedule_kind='at': ISO-8601-Zeitpunkt, z.B. '2026-02-21T06:30:00Z'"
+                        "description": "Nur bei schedule_kind='at': ISO-8601-Zeitpunkt in UTC. WICHTIG: Rechne die vom Nutzer genannte Lokalzeit in UTC um! Beispiel: Nutzer sagt '19:20' in Europe/Berlin (CET=UTC+1) → '2026-02-20T18:20:00Z'"
                     },
                     "cron_expr": {
                         "type": "string",

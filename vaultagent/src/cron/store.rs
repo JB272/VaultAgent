@@ -59,11 +59,19 @@ impl CronStore {
         let jobs = if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(content) => serde_json::from_str(&content).unwrap_or_else(|err| {
-                    eprintln!("Cron-Store: Fehler beim Parsen von {}: {}", path.display(), err);
+                    eprintln!(
+                        "Cron-Store: Fehler beim Parsen von {}: {}",
+                        path.display(),
+                        err
+                    );
                     Vec::new()
                 }),
                 Err(err) => {
-                    eprintln!("Cron-Store: Fehler beim Lesen von {}: {}", path.display(), err);
+                    eprintln!(
+                        "Cron-Store: Fehler beim Lesen von {}: {}",
+                        path.display(),
+                        err
+                    );
                     Vec::new()
                 }
             }

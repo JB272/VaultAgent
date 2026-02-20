@@ -63,9 +63,11 @@ impl Agent {
 
         // System-Prompt dynamisch aus Soul bauen (Persönlichkeit + Memory-Kontext)
         let base_prompt = self.soul.system_prompt();
+        let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
+        let now_utc = chrono::Utc::now().to_rfc3339();
         let system_prompt = format!(
-            "{}\n\n## Aktuelle Session\n- Chat-ID: {}\n- Wenn du cron_add aufrufst, verwende diese chat_id.",
-            base_prompt, chat_id
+            "{}\n\n## Aktuelle Session\n- Chat-ID: {}\n- Zeitzone des Nutzers: {}\n- Aktuelle UTC-Zeit: {}\n- WICHTIG: Wenn der Nutzer eine Uhrzeit nennt (z.B. \"um 19:20\"), ist das IMMER in seiner lokalen Zeitzone ({}). Du musst diese Zeit in UTC umrechnen, bevor du sie an cron_add übergibst. Beispiel: 19:20 CET = 18:20 UTC.",
+            base_prompt, chat_id, user_tz, now_utc, user_tz
         );
 
         let mut messages = vec![LlmMessage {
