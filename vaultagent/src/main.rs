@@ -10,9 +10,11 @@ use reasoning::agent::Agent;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
-use skills::read_file::ReadFileSkill;
-use skills::write_file::WriteFileSkill;
+use skills::python_skill::load_python_skills;
+use skills::default_skills::read_file::ReadFileSkill;
+use skills::default_skills::write_file::WriteFileSkill;
 use std::error::Error;
+use std::path::Path;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -22,8 +24,17 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // ── Skills ──────────────────────────────────────────
     let mut skills = SkillRegistry::new();
+
+    // Default Skills (Rust)
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+
+    // Softcoded Skills (Python-Skripte aus skills/ Verzeichnis)
+    let python_skills_dir = std::env::var("PYTHON_SKILLS_DIR")
+        .unwrap_or_else(|_| "skills".to_string());
+    for skill in load_python_skills(Path::new(&python_skills_dir)).await {
+        skills.add(skill);
+    }
 
     // ── LLM ─────────────────────────────────────────────
     let llm: Option<Box<dyn LlmInterface>> = match OpenAiCompatibleClient::from_env() {

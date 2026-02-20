@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
 
 use crate::reasoning::llm_interface::LlmToolDefinition;
-use super::Skill;
+use crate::skills::Skill;
 
 pub struct ReadFileSkill;
 

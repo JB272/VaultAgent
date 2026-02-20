@@ -1,5 +1,5 @@
-pub mod read_file;
-pub mod write_file;
+pub mod default_skills;
+pub mod python_skill;
 
 use async_trait::async_trait;
 use serde_json::Value;
