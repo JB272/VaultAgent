@@ -50,10 +50,17 @@ impl CronScheduler {
                             job.prompt.clone()
                         }
                     );
+                    let cron_prompt = format!(
+                        "[SYSTEM: Dies ist eine geplante Erinnerung/Aufgabe mit dem Namen '{}', \
+                         die jetzt ausgelöst wurde. Führe die folgende Aufgabe AUS und antworte \
+                         dem Nutzer direkt mit dem Ergebnis. Erstelle KEINE neue Erinnerung, \
+                         sondern liefere die Antwort/Erinnerung direkt ab.]\n\n{}",
+                        job.name, job.prompt
+                    );
                     writer
                         .push(IncomingAction::Cron(ChronAction {
                             chat_id: job.chat_id,
-                            prompt: job.prompt,
+                            prompt: cron_prompt,
                             job_name: job.name,
                         }))
                         .await;
