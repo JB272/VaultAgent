@@ -479,7 +479,10 @@ async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Opt
             }
         },
         Err(err) => {
-            eprintln!("[Telegram][Voice] Failed to fetch Telegram file path: {}", err);
+            eprintln!(
+                "[Telegram][Voice] Failed to fetch Telegram file path: {}",
+                err
+            );
             None
         }
     }
