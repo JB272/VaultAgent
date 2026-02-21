@@ -4,6 +4,12 @@ A personal AI assistant written in Rust, heavily inspired by [OpenClaw](https://
 
 VaultAgent runs on a Raspberry Pi (or any Linux server), connects to Telegram, and acts as your personal assistant with long-term memory, scheduled tasks, voice transcription, and extensible skills.
 
+## Motivation
+
+I loved using [OpenClaw](https://github.com/openclaw/openclaw), but I was always afraid to leave it running overnight. What if a bug caused it to loop and rack up massive API costs? What if my API keys got leaked? The thought of waking up to a surprise bill kept me from truly trusting the setup.
+
+VaultAgent is my attempt to rebuild the same idea — a personal, self-hosted AI agent with a soul and memory — but with safety and control as a first-class priority. Written in Rust, it compiles to a single static binary, runs on minimal resources, and gives me the confidence to let it run 24/7 without worrying about runaway costs or exposed credentials.
+
 ## Features
 
 ### Working
@@ -173,6 +179,12 @@ vaultagent/
 ├── .env_example                 # Environment template
 └── Cargo.toml
 ```
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see the [LICENSE](LICENSE) file for details.
+
+You are free to use, modify, and distribute this software, as long as any modified versions (including those running as a network service) remain open source under the same license.
 
 ## Acknowledgments
 
