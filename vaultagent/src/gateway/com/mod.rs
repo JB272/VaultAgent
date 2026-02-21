@@ -41,7 +41,7 @@ impl GatewayRegistry {
     }
 
     pub fn add<G: Gateway + 'static>(&mut self, gateway: G) -> &mut Self {
-        println!("  Gateway registriert: {}", gateway.name());
+        println!("[Gateway] Registered: {}", gateway.name());
         self.gateways.push(Box::new(gateway));
         self
     }
@@ -49,7 +49,7 @@ impl GatewayRegistry {
     pub async fn broadcast_reply(&self, chat_id: i64, text: &str) {
         for gw in &self.gateways {
             if let Err(e) = gw.send_reply(chat_id, text).await {
-                eprintln!("[{}] Nachricht senden fehlgeschlagen: {}", gw.name(), e);
+                eprintln!("[Gateway:{}] Failed to send reply: {}", gw.name(), e);
             }
         }
     }
@@ -57,7 +57,7 @@ impl GatewayRegistry {
     pub async fn broadcast_typing(&self, chat_id: i64, typing: bool) {
         for gw in &self.gateways {
             if let Err(e) = gw.notify_typing(chat_id, typing).await {
-                eprintln!("[{}] Typing setzen fehlgeschlagen: {}", gw.name(), e);
+                eprintln!("[Gateway:{}] Failed to set typing state: {}", gw.name(), e);
             }
         }
     }

@@ -13,13 +13,13 @@ impl Personality {
         let path = soul_dir.join("personality.md");
         let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
             eprintln!(
-                "Persönlichkeit nicht gefunden ({}), verwende Fallback.",
+                "[Soul][Personality] File not found ({}), using fallback prompt.",
                 path.display()
             );
             "Du bist ein hilfreicher Assistent. Antworte auf Deutsch.".to_string()
         });
 
-        println!("  Persönlichkeit geladen: {}", path.display());
+        println!("[Soul][Personality] Loaded: {}", path.display());
 
         Self { content, path }
     }

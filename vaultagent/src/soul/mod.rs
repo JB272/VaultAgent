@@ -18,7 +18,7 @@ pub struct Soul {
 impl Soul {
     /// Lädt die Soul aus einem Verzeichnis (default: `soul/`).
     pub fn load(soul_dir: &Path) -> Self {
-        println!("Soul laden aus: {}", soul_dir.display());
+        println!("[Soul] Loading from: {}", soul_dir.display());
 
         let personality = Personality::load(soul_dir);
         let memory = Arc::new(Memory::new(soul_dir));

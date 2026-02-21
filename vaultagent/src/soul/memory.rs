@@ -13,7 +13,7 @@ impl Memory {
         let memory_dir = soul_dir.join("memory");
         if !memory_dir.exists() {
             if let Err(e) = std::fs::create_dir_all(&memory_dir) {
-                eprintln!("Konnte memory/ nicht erstellen: {}", e);
+                eprintln!("[Soul][Memory] Failed to create memory/ directory: {}", e);
             }
         }
         Self {

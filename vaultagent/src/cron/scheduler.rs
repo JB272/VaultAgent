@@ -17,12 +17,14 @@ impl CronScheduler {
             let jobs = store_clone.list().await;
             let active: Vec<_> = jobs.iter().filter(|j| j.enabled).collect();
             if !active.is_empty() {
-                println!("  Cron: {} aktive(r) Job(s):", active.len());
+                println!("[Cron] {} active job(s):", active.len());
                 for job in &active {
                     let schedule_desc = match &job.schedule {
-                        crate::cron::store::Schedule::At { at } => format!("einmalig um {}", at),
+                        crate::cron::store::Schedule::At { at } => {
+                            format!("once at {}", at)
+                        }
                         crate::cron::store::Schedule::Every { every_secs } => {
-                            format!("alle {}s", every_secs)
+                            format!("every {}s", every_secs)
                         }
                         crate::cron::store::Schedule::Cron { expr, .. } => {
                             format!("cron '{}'", expr)
@@ -41,7 +43,7 @@ impl CronScheduler {
                 let due_jobs = store.take_due_jobs(now).await;
                 for job in due_jobs {
                     println!(
-                        "⏰ Cron feuert: \"{}\" → Chat {} | Prompt: {}",
+                        "[Cron] Triggered job \"{}\" for chat {} | Prompt: {}",
                         job.name,
                         job.chat_id,
                         if job.prompt.len() > 60 {

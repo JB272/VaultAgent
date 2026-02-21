@@ -60,7 +60,7 @@ impl CronStore {
             match std::fs::read_to_string(&path) {
                 Ok(content) => serde_json::from_str(&content).unwrap_or_else(|err| {
                     eprintln!(
-                        "Cron-Store: Fehler beim Parsen von {}: {}",
+                        "[CronStore] Failed to parse {}: {}",
                         path.display(),
                         err
                     );
@@ -68,7 +68,7 @@ impl CronStore {
                 }),
                 Err(err) => {
                     eprintln!(
-                        "Cron-Store: Fehler beim Lesen von {}: {}",
+                        "[CronStore] Failed to read {}: {}",
                         path.display(),
                         err
                     );
@@ -86,7 +86,7 @@ impl CronStore {
         };
 
         if count > 0 {
-            println!("  Cron-Store geladen: {} Job(s)", count);
+            println!("[CronStore] Loaded {} job(s)", count);
         }
 
         store

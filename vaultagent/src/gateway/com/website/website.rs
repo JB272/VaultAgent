@@ -74,19 +74,19 @@ impl WebsiteGateway {
             .with_state(app_state);
 
         let address = SocketAddr::from(([127, 0, 0, 1], self.port));
-        println!("Website chat läuft auf http://{}", address);
+        println!("[Website] Chat server listening on http://{}", address);
 
         tokio::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(address).await {
                 Ok(value) => value,
                 Err(err) => {
-                    eprintln!("Fehler beim Binden des Website-Ports: {}", err);
+                        eprintln!("[Website] Failed to bind port: {}", err);
                     return;
                 }
             };
 
             if let Err(err) = axum::serve(listener, app).await {
-                eprintln!("Website-Server ist mit Fehler beendet: {}", err);
+                    eprintln!("[Website] Server exited with error: {}", err);
             }
         });
 

@@ -24,7 +24,7 @@ impl WebSearchSkill {
 
     /// DuckDuckGo Instant Answer API abfragen.
     async fn search_ddg(&self, query: &str) -> String {
-        println!("[web_search] Suche gestartet: {}", query);
+        println!("[WebSearch] Search started: {}", query);
         let url = format!(
             "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=0",
             urlencoding::encode(query)
@@ -102,7 +102,7 @@ impl WebSearchSkill {
             let html_fallback = self.search_ddg_html(query).await;
             if !html_fallback.is_empty() {
                 println!(
-                    "[web_search] API leer, HTML-Fallback lieferte {} Treffer",
+                    "[WebSearch] API returned no results, HTML fallback returned {} result(s)",
                     html_fallback.len()
                 );
                 json!({
@@ -114,7 +114,7 @@ impl WebSearchSkill {
                 })
                 .to_string()
             } else {
-                println!("[web_search] Keine Treffer für: {}", query);
+                println!("[WebSearch] No results for: {}", query);
                 json!({
                     "ok": true,
                     "results": [],
@@ -123,7 +123,7 @@ impl WebSearchSkill {
                 .to_string()
             }
         } else {
-            println!("[web_search] {} Treffer über API", results.len());
+            println!("[WebSearch] API returned {} result(s)", results.len());
             json!({
                 "ok": true,
                 "query": query,

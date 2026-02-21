@@ -85,11 +85,14 @@ impl TelegramBot {
         }
 
         if !allowed.is_empty() {
-            println!("  Telegram: {} erlaubte Chat-ID(s)", allowed.len());
+            println!(
+                "[Telegram] Access list enabled: {} allowed chat ID(s)",
+                allowed.len()
+            );
             bot.allowed_chat_ids = Some(allowed);
         } else {
             println!(
-                "  Telegram: Keine Chat-ID-Einschränkung (weder ENV noch trusted_chat_ids.md gesetzt)"
+                "[Telegram] Access list disabled: no IDs set in TELEGRAM_ALLOWED_CHAT_IDS or trusted_chat_ids.md"
             );
         }
 
@@ -116,25 +119,25 @@ impl TelegramBot {
                 .with_state(app_state);
 
             let address = SocketAddr::from(([0, 0, 0, 0], self.port));
-            println!("  Telegram Webhook-Server läuft auf {}", address);
+            println!("[Telegram] Webhook server listening on {}", address);
 
             tokio::spawn(async move {
                 let listener = match tokio::net::TcpListener::bind(address).await {
                     Ok(value) => value,
                     Err(err) => {
-                        eprintln!("Fehler beim Binden des Webhook-Ports: {}", err);
+                        eprintln!("[Telegram] Failed to bind webhook port: {}", err);
                         return;
                     }
                 };
 
                 if let Err(err) = axum::serve(listener, app).await {
-                    eprintln!("Webhook-Server ist mit Fehler beendet: {}", err);
+                    eprintln!("[Telegram] Webhook server exited with error: {}", err);
                 }
             });
         } else {
             // Polling-Modus: Webhook löschen und long-polling starten
             self.delete_webhook().await?;
-            println!("  Telegram Polling-Modus aktiv");
+            println!("[Telegram] Polling mode enabled");
 
             let bot = self.clone();
             tokio::spawn(async move {
@@ -168,7 +171,10 @@ impl TelegramBot {
                                         let _ = bot
                                             .get_updates(Some(update.update_id + 1), Some(0))
                                             .await;
-                                        println!("Reboot angefordert von Chat {}", message.chat.id);
+                                        println!(
+                                            "[Telegram] Reboot requested by chat {}",
+                                            message.chat.id
+                                        );
                                         std::process::exit(0);
                                     }
 
@@ -185,7 +191,7 @@ impl TelegramBot {
                             }
                         }
                         Err(err) => {
-                            eprintln!("Telegram Polling-Fehler: {}. Retry in 5s…", err);
+                            eprintln!("[Telegram] Polling error: {}. Retrying in 5s...", err);
                             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                         }
                     }
@@ -329,13 +335,13 @@ impl TelegramBot {
         if !body.ok {
             return Err(body
                 .description
-                .unwrap_or("getFile fehlgeschlagen".to_string())
+                .unwrap_or("getFile failed".to_string())
                 .into());
         }
 
         body.result
             .and_then(|f| f.file_path)
-            .ok_or_else(|| "Kein file_path in der Antwort".into())
+            .ok_or_else(|| "No file_path in Telegram response".into())
     }
 
     /// Lädt eine Datei von den Telegram-Servern herunter.
@@ -350,7 +356,7 @@ impl TelegramBot {
 
         let response = self.client.get(&url).send().await?;
         if !response.status().is_success() {
-            return Err(format!("Download fehlgeschlagen: {}", response.status()).into());
+            return Err(format!("Download failed: {}", response.status()).into());
         }
 
         Ok(response.bytes().await?.to_vec())
@@ -385,18 +391,18 @@ pub async fn setup_telegram(incoming_writer: IncomingActionWriter) -> Option<Tel
                 Ok(()) => Some(telegram),
                 Err(err) => {
                     eprintln!(
-                        "Telegram deaktiviert: Start fehlgeschlagen ({}). Website läuft weiter.",
+                        "[Telegram] Disabled: startup failed ({}). Website gateway continues.",
                         err
                     );
                     None
                 }
             }
         } else {
-            println!("Telegram deaktiviert: unvollständige Telegram-Konfiguration.");
+            println!("[Telegram] Disabled: incomplete Telegram configuration.");
             None
         }
     } else {
-        println!("Telegram deaktiviert: kein Telegram-Token gefunden.");
+        println!("[Telegram] Disabled: no Telegram bot token configured.");
         None
     }
 }
@@ -448,32 +454,32 @@ async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Opt
         Ok(file_path) => match bot.download_file(&file_path).await {
             Ok(data) => {
                 println!(
-                    "Sprachnachricht empfangen ({} Bytes, {:?}), transkribiere…",
+                    "[Telegram][Voice] Received audio message ({} bytes, {:?}), transcribing...",
                     data.len(),
                     mime
                 );
                 match transcription_service.transcribe(data, mime).await {
                     Ok(text) if !text.trim().is_empty() => {
-                        println!("Transkription: {}", text);
+                        println!("[Telegram][Voice] Transcription: {}", text);
                         Some(format!("[Sprachnachricht] {}", text))
                     }
                     Ok(_) => {
-                        eprintln!("Transkription ergab leeren Text.");
+                        eprintln!("[Telegram][Voice] Transcription returned empty text.");
                         None
                     }
                     Err(err) => {
-                        eprintln!("Transkriptions-Fehler: {}", err);
+                        eprintln!("[Telegram][Voice] Transcription failed: {}", err);
                         None
                     }
                 }
             }
             Err(err) => {
-                eprintln!("Fehler beim Download der Audio-Datei: {}", err);
+                eprintln!("[Telegram][Voice] Failed to download audio file: {}", err);
                 None
             }
         },
         Err(err) => {
-            eprintln!("Fehler beim Abrufen des file_path: {}", err);
+            eprintln!("[Telegram][Voice] Failed to fetch Telegram file path: {}", err);
             None
         }
     }
@@ -512,7 +518,7 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
                 .bot
                 .send_message(message.chat.id, "♻️ Starte neu…")
                 .await;
-            println!("Reboot angefordert von Chat {}", message.chat.id);
+            println!("[Telegram] Reboot requested by chat {}", message.chat.id);
             std::process::exit(0);
         }
 

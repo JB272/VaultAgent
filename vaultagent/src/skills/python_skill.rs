@@ -34,7 +34,7 @@ impl PythonSkill {
 
         if !script_path.exists() {
             return Err(format!(
-                "Python-Skill nicht gefunden: {}",
+                "Python skill not found: {}",
                 script_path.display()
             ));
         }
@@ -44,7 +44,7 @@ impl PythonSkill {
             .arg("--describe")
             .output()
             .await
-            .map_err(|e| format!("Konnte Python-Skill nicht starten: {}", e))?;
+            .map_err(|e| format!("Failed to start Python skill: {}", e))?;
 
         let describe_stdout = String::from_utf8_lossy(&output.stdout);
         let describe_stderr = String::from_utf8_lossy(&output.stderr);
@@ -66,7 +66,7 @@ impl PythonSkill {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(format!(
-                "Python-Skill --describe fehlgeschlagen ({}): {}",
+                "Python skill --describe failed ({}): {}",
                 script_path.display(),
                 stderr.trim()
             ));
@@ -75,7 +75,7 @@ impl PythonSkill {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let desc: SkriptDescription = serde_json::from_str(stdout.trim()).map_err(|e| {
             format!(
-                "Ungültige --describe Antwort von {}: {} (raw: {})",
+                "Invalid --describe response from {}: {} (raw: {})",
                 script_path.display(),
                 e,
                 stdout.trim()
@@ -159,7 +159,7 @@ impl Skill for PythonSkill {
                 } else {
                     json!({
                         "ok": false,
-                        "error": format!("Skript beendet mit Code {:?}", output.status.code()),
+                        "error": format!("Script exited with code {:?}", output.status.code()),
                         "stderr": stderr.trim(),
                         "stdout": stdout.trim(),
                     })
@@ -168,7 +168,7 @@ impl Skill for PythonSkill {
             }
             Err(err) => json!({
                 "ok": false,
-                "error": format!("Konnte Skript nicht starten: {}", err),
+                "error": format!("Failed to start script: {}", err),
             })
             .to_string(),
         }
@@ -184,7 +184,7 @@ pub async fn load_python_skills(dir: &Path) -> Vec<PythonSkill> {
         Ok(entries) => entries,
         Err(err) => {
             eprintln!(
-                "Python-Skills-Verzeichnis nicht lesbar ({}): {}",
+                "[PythonSkill] Skill directory is not readable ({}): {}",
                 dir.display(),
                 err
             );
@@ -198,14 +198,14 @@ pub async fn load_python_skills(dir: &Path) -> Vec<PythonSkill> {
             match PythonSkill::load(&path).await {
                 Ok(skill) => {
                     println!(
-                        "  Python-Skill geladen: {} ({})",
+                        "[PythonSkill] Loaded: {} ({})",
                         skill.definition.name,
                         path.display()
                     );
                     skills.push(skill);
                 }
                 Err(err) => {
-                    eprintln!("  Python-Skill übersprungen: {}", err);
+                    eprintln!("[PythonSkill] Skipped: {}", err);
                 }
             }
         }

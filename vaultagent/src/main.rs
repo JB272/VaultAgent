@@ -68,11 +68,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // ── LLM ─────────────────────────────────────────────
     let llm: Option<Box<dyn LlmInterface>> = match OpenAiCompatibleClient::from_env() {
         Ok(client) => {
-            println!("LLM aktiv: {}", client.provider_name());
+            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
             Some(Box::new(client))
         }
         Err(err) => {
-            eprintln!("LLM deaktiviert: {}", err);
+            eprintln!("[Main][LLM] Disabled: {}", err);
             None
         }
     };
@@ -95,14 +95,17 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // ── Cron Scheduler ──────────────────────────────────
     CronScheduler::start(Arc::clone(&cron_store), incoming.register_service());
-    println!("  Cron-Scheduler aktiv");
+    println!("[Main][Cron] Scheduler started");
 
     // ── Event Loop ──────────────────────────────────────
     loop {
         let action = incoming.pop().await;
         match action {
             IncomingAction::Chat(chat) => {
-                println!("Chat-Nachricht von {}: {}", chat.chat_id, chat.text);
+                println!(
+                    "[Main][Chat] Received message from chat {}: {}",
+                    chat.chat_id, chat.text
+                );
 
                 gateways.broadcast_typing(chat.chat_id, true).await;
                 let reply = agent.process(&chat.text, chat.chat_id).await;
@@ -112,7 +115,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             IncomingAction::Agent(_) => {}
             IncomingAction::Cron(cron_action) => {
                 println!(
-                    "Cron-Job ausgelöst: \"{}\" → Chat {}",
+                    "[Main][Cron] Triggered job \"{}\" for chat {}",
                     cron_action.job_name, cron_action.chat_id
                 );
 
