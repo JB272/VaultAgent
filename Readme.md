@@ -108,6 +108,13 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
    cargo run
    ```
 
+### Binary Size
+
+Current local build sizes:
+
+- **Debug** (`target/debug/vaultagent`): **20M** (`21,255,448` bytes)
+- **Release** (`target/release/vaultagent`): **6.3M** (`6,583,280` bytes)
+
 ### Deploy to a Raspberry Pi
 
 The included `deploy.sh` cross-compiles for `aarch64-unknown-linux-musl` (statically linked, no dependencies), copies everything to your server, and sets up a systemd service.
