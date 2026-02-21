@@ -47,9 +47,13 @@ impl Skill for ResearchSkill {
                     "task": {
                         "type": "string",
                         "description": "The research question or topic to investigate in detail."
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "The language to write the answer in, e.g. 'German', 'English', 'French'. Must match the language the user is writing in."
                     }
                 },
-                "required": ["task"],
+                "required": ["task", "language"],
                 "additionalProperties": false
             }),
         }
@@ -61,20 +65,29 @@ impl Skill for ResearchSkill {
             None => return json!({ "ok": false, "error": "'task' is required." }).to_string(),
         };
 
-        println!("[Research] Spawning subagent for: {}", task);
+        let language = arguments
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("English");
 
-        let system_prompt =
+        println!("[Research] Spawning subagent for: {} (language: {})", task, language);
+
+        let system_prompt = format!(
             "You are a focused web research assistant. Your only job is to answer the given \
              research task thoroughly and accurately.\n\
+             \n\
+             IMPORTANT: You MUST write your entire answer in {language}. \
+             Do not use any other language, regardless of the source language of the web pages you read.\n\
              \n\
              Guidelines:\n\
              1. Use web_search to find relevant pages for the topic.\n\
              2. Use web_fetch on at least 1-2 of the most relevant URLs to read the actual content.\n\
-             3. Synthesise the information into a clear, concise answer.\n\
+             3. Synthesise the information into a clear, concise answer in {language}.\n\
              4. Always include source URLs inline (Markdown links).\n\
              5. If the first search yields no useful results, try a different query.\n\
-             6. Do NOT just list links — always read and summarise the content."
-                .to_string();
+             6. Do NOT just list links — always read and summarise the content.",
+            language = language
+        );
 
         let mut sub_skills = SkillRegistry::new();
         sub_skills.add(WebSearchSkill::new());

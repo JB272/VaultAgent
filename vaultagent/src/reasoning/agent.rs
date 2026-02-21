@@ -61,8 +61,7 @@ impl Agent {
     /// an welchen Chat die Antwort gehen soll.
     pub async fn process(&self, user_text: &str, chat_id: i64) -> String {
         let Some(llm) = &self.llm else {
-            return "LLM is not configured. Set LLM_API_KEY to receive responses."
-                .to_string();
+            return "LLM is not configured. Set LLM_API_KEY to receive responses.".to_string();
         };
 
         // User-Nachricht an die persistente History anhängen
@@ -93,8 +92,7 @@ impl Agent {
                 .as_ref()
                 .expect("Agent must have either a Soul or a custom_system_prompt");
             let base_prompt = soul.system_prompt();
-            let user_tz =
-                std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
+            let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
             format!(
                 "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.",
