@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 
-/// Skill: Websuche via DuckDuckGo + optional direkter URL-Abruf.
+use super::http_utils::{fetch_page, strip_html};
+
+/// Skill: Web search via DuckDuckGo.
 pub struct WebSearchSkill {
     client: Client,
 }
@@ -22,7 +24,7 @@ impl WebSearchSkill {
         }
     }
 
-    /// DuckDuckGo Instant Answer API abfragen.
+    /// Query the DuckDuckGo Instant Answer API.
     async fn search_ddg(&self, query: &str) -> String {
         println!("[WebSearch] Search started: {}", query);
         let url = format!(
@@ -55,7 +57,6 @@ impl WebSearchSkill {
 
         let mut results = Vec::new();
 
-        // Abstract (Hauptantwort)
         if !ddg.r#abstract.is_empty() {
             results.push(json!({
                 "type": "abstract",
@@ -65,7 +66,6 @@ impl WebSearchSkill {
             }));
         }
 
-        // Answer (direkte Antwort)
         if !ddg.answer.is_empty() {
             results.push(json!({
                 "type": "answer",
@@ -73,7 +73,6 @@ impl WebSearchSkill {
             }));
         }
 
-        // Related Topics (inkl. verschachtelter Gruppen)
         for topic in flatten_related_topics(&ddg.related_topics)
             .into_iter()
             .take(6)
@@ -87,7 +86,6 @@ impl WebSearchSkill {
             }
         }
 
-        // Results
         for result in ddg.results.iter().take(5) {
             if !result.text.is_empty() {
                 results.push(json!({
@@ -118,7 +116,7 @@ impl WebSearchSkill {
                 json!({
                     "ok": true,
                     "results": [],
-                    "message": format!("No results for '{}'. Try different wording or fetch a URL directly.", query),
+                    "message": format!("No results for '{}'. Try different wording.", query),
                 })
                 .to_string()
             }
@@ -152,55 +150,6 @@ impl WebSearchSkill {
 
         extract_html_results(&body, 6)
     }
-
-    /// Eine URL abrufen und den Textinhalt extrahieren.
-    async fn fetch_url(&self, url: &str) -> String {
-        let response = match self.client.get(url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                return json!({ "ok": false, "error": format!("HTTP error: {}", e) }).to_string();
-            }
-        };
-
-        let status = response.status().as_u16();
-        if !response.status().is_success() {
-            return json!({
-                "ok": false,
-                "error": format!("HTTP {}", status),
-            })
-            .to_string();
-        }
-
-        let body = match response.text().await {
-            Ok(t) => t,
-            Err(e) => {
-                return json!({ "ok": false, "error": format!("Failed to read response body: {}", e) })
-                    .to_string();
-            }
-        };
-
-        // Einfache HTML-zu-Text Extraktion
-        let text = strip_html(&body);
-
-        // Auf vernünftige Länge kürzen (max ~4000 Zeichen)
-        let truncated = if text.len() > 4000 {
-            format!(
-                "{}...\n[truncated, {} total characters]",
-                &text[..4000],
-                text.len()
-            )
-        } else {
-            text
-        };
-
-        json!({
-            "ok": true,
-            "url": url,
-            "status": status,
-            "content": truncated,
-        })
-        .to_string()
-    }
 }
 
 #[async_trait]
@@ -209,9 +158,13 @@ impl Skill for WebSearchSkill {
         LlmToolDefinition {
             name: "web_search".to_string(),
             description: Some(
-                "Searches the web for information or fetches a URL. \
-                 Use 'query' for web search or 'url' to read a specific page. \
-                 You can also provide both."
+                "Searches the web and returns ONLY a list of links with short snippets — \
+                 it does NOT return full page content. \
+                 IMPORTANT: Do NOT use this tool if the user wants actual content such as \
+                 recipes, articles, instructions, summaries, or detailed information. \
+                 For any of those cases, always use the 'research' tool instead. \
+                 Only use web_search when the user explicitly asks for a list of links, \
+                 or when you just need a quick URL to pass to web_fetch."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -219,11 +172,11 @@ impl Skill for WebSearchSkill {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query for web lookup."
+                        "description": "Search query."
                     },
                     "url": {
                         "type": "string",
-                        "description": "URL of a webpage to fetch and parse."
+                        "description": "Optional: a specific URL to fetch alongside the search."
                     }
                 },
                 "additionalProperties": false
@@ -237,9 +190,8 @@ impl Skill for WebSearchSkill {
 
         match (query, url) {
             (Some(q), Some(u)) => {
-                // Beides: Suche + URL-Abruf
                 let search_result = self.search_ddg(q).await;
-                let fetch_result = self.fetch_url(u).await;
+                let fetch_result = fetch_page(&self.client, u, 4000).await;
                 json!({
                     "search": serde_json::from_str::<Value>(&search_result).unwrap_or(Value::Null),
                     "fetch": serde_json::from_str::<Value>(&fetch_result).unwrap_or(Value::Null),
@@ -247,7 +199,7 @@ impl Skill for WebSearchSkill {
                 .to_string()
             }
             (Some(q), None) => self.search_ddg(q).await,
-            (None, Some(u)) => self.fetch_url(u).await,
+            (None, Some(u)) => fetch_page(&self.client, u, 4000).await,
             (None, None) => {
                 json!({ "ok": false, "error": "Either 'query' or 'url' must be provided." })
                     .to_string()
@@ -256,98 +208,7 @@ impl Skill for WebSearchSkill {
     }
 }
 
-// ── HTML → Text ─────────────────────────────────────────
-
-fn strip_html(html: &str) -> String {
-    let mut result = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    let mut in_script = false;
-    let mut in_style = false;
-    let mut last_was_whitespace = false;
-
-    let lower = html.to_lowercase();
-    let chars: Vec<char> = html.chars().collect();
-    let lower_chars: Vec<char> = lower.chars().collect();
-
-    let mut i = 0;
-    while i < chars.len() {
-        if starts_with_at(&lower_chars, i, "<script") {
-            in_script = true;
-            in_tag = true;
-        } else if starts_with_at(&lower_chars, i, "</script") {
-            in_script = false;
-            in_tag = true;
-        } else if starts_with_at(&lower_chars, i, "<style") {
-            in_style = true;
-            in_tag = true;
-        } else if starts_with_at(&lower_chars, i, "</style") {
-            in_style = false;
-            in_tag = true;
-        } else if chars[i] == '<' {
-            in_tag = true;
-        }
-
-        if chars[i] == '>' && in_tag {
-            in_tag = false;
-            i += 1;
-            continue;
-        }
-
-        if !in_tag && !in_script && !in_style {
-            let ch = chars[i];
-            if ch.is_whitespace() {
-                if !last_was_whitespace {
-                    result.push(' ');
-                    last_was_whitespace = true;
-                }
-            } else {
-                result.push(ch);
-                last_was_whitespace = false;
-            }
-        }
-
-        i += 1;
-    }
-
-    // HTML-Entities dekodieren
-    result
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-        .trim()
-        .to_string()
-}
-
-fn starts_with_at(chars: &[char], pos: usize, needle: &str) -> bool {
-    let needle_chars: Vec<char> = needle.chars().collect();
-    if pos + needle_chars.len() > chars.len() {
-        return false;
-    }
-    for (j, nc) in needle_chars.iter().enumerate() {
-        if chars[pos + j] != *nc {
-            return false;
-        }
-    }
-    true
-}
-
-fn flatten_related_topics(items: &[DdgTopicEntry]) -> Vec<DdgTopic> {
-    let mut out = Vec::new();
-    for item in items {
-        match item {
-            DdgTopicEntry::Topic(topic) => out.push(topic.clone()),
-            DdgTopicEntry::Group(group) => {
-                for topic in &group.topics {
-                    out.push(topic.clone());
-                }
-            }
-        }
-    }
-    out
-}
+// ── HTML helpers (shared via http_utils, only HTML-result extractor kept here) ──
 
 fn extract_html_results(html: &str, max_results: usize) -> Vec<Value> {
     let mut results = Vec::new();
@@ -451,4 +312,19 @@ enum DdgTopicEntry {
 struct DdgTopicGroup {
     #[serde(rename = "Topics", default)]
     topics: Vec<DdgTopic>,
+}
+
+fn flatten_related_topics(items: &[DdgTopicEntry]) -> Vec<DdgTopic> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            DdgTopicEntry::Topic(topic) => out.push(topic.clone()),
+            DdgTopicEntry::Group(group) => {
+                for topic in &group.topics {
+                    out.push(topic.clone());
+                }
+            }
+        }
+    }
+    out
 }

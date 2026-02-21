@@ -20,6 +20,8 @@ use skills::default_skills::list_directory::ListDirectorySkill;
 use skills::default_skills::memory_save::MemorySaveSkill;
 use skills::default_skills::memory_search::MemorySearchSkill;
 use skills::default_skills::read_file::ReadFileSkill;
+use skills::default_skills::research::ResearchSkill;
+use skills::default_skills::web_fetch::WebFetchSkill;
 use skills::default_skills::web_search::WebSearchSkill;
 use skills::default_skills::write_file::WriteFileSkill;
 use skills::python_skill::load_python_skills;
@@ -42,6 +44,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cron_dir = std::env::var("CRON_DIR").unwrap_or_else(|_| "cron".to_string());
     let cron_store = Arc::new(CronStore::load(Path::new(&cron_dir)));
 
+    // ── LLM ─────────────────────────────────────────────
+    let llm: Option<std::sync::Arc<dyn LlmInterface>> = match OpenAiCompatibleClient::from_env() {
+        Ok(client) => {
+            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+            Some(std::sync::Arc::new(client))
+        }
+        Err(err) => {
+            eprintln!("[Main][LLM] Disabled: {}", err);
+            None
+        }
+    };
+
     // ── Skills ──────────────────────────────────────────
     let mut skills = SkillRegistry::new();
 
@@ -50,6 +64,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     skills.add(WriteFileSkill);
     skills.add(ListDirectorySkill);
     skills.add(WebSearchSkill::new());
+    skills.add(WebFetchSkill::new());
+    if let Some(ref llm_arc) = llm {
+        skills.add(ResearchSkill::new(std::sync::Arc::clone(llm_arc)));
+    }
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
     skills.add(MemorySearchSkill::new(Arc::clone(&soul.memory)));
 
@@ -64,18 +82,6 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     for skill in load_python_skills(Path::new(&python_skills_dir)).await {
         skills.add(skill);
     }
-
-    // ── LLM ─────────────────────────────────────────────
-    let llm: Option<Box<dyn LlmInterface>> = match OpenAiCompatibleClient::from_env() {
-        Ok(client) => {
-            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-            Some(Box::new(client))
-        }
-        Err(err) => {
-            eprintln!("[Main][LLM] Disabled: {}", err);
-            None
-        }
-    };
 
     // ── Agent ───────────────────────────────────────────
     let agent = Agent::new(llm, skills, soul);

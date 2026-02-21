@@ -8,27 +8,49 @@ use crate::reasoning::llm_interface::{
 use crate::skills::SkillRegistry;
 use crate::soul::Soul;
 
-/// Der Agent orchestriert LLM-Aufrufe und Tool-Ausführungen.
-/// Er hält eine persistente Conversation-History und baut den System-Prompt
-/// dynamisch aus der Soul (Persönlichkeit + Gedächtnis).
+/// The Agent orchestrates LLM calls and tool executions.
+/// It holds a persistent conversation history and builds the system prompt
+/// dynamically from the Soul (personality + memory).
+/// For subagents, a fixed system prompt can be used instead of a Soul.
 pub struct Agent {
-    llm: Option<Box<dyn LlmInterface>>,
+    llm: Option<Arc<dyn LlmInterface>>,
     skills: SkillRegistry,
-    soul: Arc<Soul>,
+    soul: Option<Arc<Soul>>,
+    custom_system_prompt: Option<String>,
     history: Mutex<Vec<LlmMessage>>,
     max_rounds: usize,
     max_history: usize,
 }
 
 impl Agent {
-    pub fn new(llm: Option<Box<dyn LlmInterface>>, skills: SkillRegistry, soul: Arc<Soul>) -> Self {
+    /// Creates the main agent with a Soul (personality + memory).
+    pub fn new(llm: Option<Arc<dyn LlmInterface>>, skills: SkillRegistry, soul: Arc<Soul>) -> Self {
         Self {
             llm,
             skills,
-            soul,
+            soul: Some(soul),
+            custom_system_prompt: None,
             history: Mutex::new(Vec::new()),
             max_rounds: 4,
             max_history: 50,
+        }
+    }
+
+    /// Creates a focused subagent with a fixed system prompt (no Soul, no history carry-over).
+    /// Runs up to 8 tool-call rounds — suited for deep research or multi-step delegated tasks.
+    pub fn subagent(
+        llm: Arc<dyn LlmInterface>,
+        skills: SkillRegistry,
+        system_prompt: String,
+    ) -> Self {
+        Self {
+            llm: Some(llm),
+            skills,
+            soul: None,
+            custom_system_prompt: Some(system_prompt),
+            history: Mutex::new(Vec::new()),
+            max_rounds: 8,
+            max_history: 20,
         }
     }
 
@@ -61,14 +83,24 @@ impl Agent {
             }
         }
 
-        // System-Prompt dynamisch aus Soul bauen (Persönlichkeit + Memory-Kontext)
-        let base_prompt = self.soul.system_prompt();
-        let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
-        let now_utc = chrono::Utc::now().to_rfc3339();
-        let system_prompt = format!(
-            "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.",
-            base_prompt, chat_id, user_tz, now_utc, user_tz
-        );
+        // Build system prompt — use the custom override for subagents,
+        // otherwise derive dynamically from Soul (personality + memory + session context).
+        let system_prompt = if let Some(prompt) = &self.custom_system_prompt {
+            prompt.clone()
+        } else {
+            let soul = self
+                .soul
+                .as_ref()
+                .expect("Agent must have either a Soul or a custom_system_prompt");
+            let base_prompt = soul.system_prompt();
+            let user_tz =
+                std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
+            let now_utc = chrono::Utc::now().to_rfc3339();
+            format!(
+                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.",
+                base_prompt, chat_id, user_tz, now_utc, user_tz
+            )
+        };
 
         let mut messages = vec![LlmMessage {
             role: LlmRole::Developer,

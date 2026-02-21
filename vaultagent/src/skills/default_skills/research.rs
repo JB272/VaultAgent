@@ -1,0 +1,97 @@
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+use crate::reasoning::agent::Agent;
+use crate::reasoning::llm_interface::{LlmInterface, LlmToolDefinition};
+use crate::skills::Skill;
+use crate::skills::SkillRegistry;
+
+use super::web_fetch::WebFetchSkill;
+use super::web_search::WebSearchSkill;
+
+/// Skill: Spawns a focused research subagent.
+///
+/// The subagent has access to `web_search` and `web_fetch`, runs for up to
+/// 8 rounds, and returns a synthesised, cited answer. Use this whenever you
+/// need detailed information from the web — not just a list of links.
+pub struct ResearchSkill {
+    llm: Arc<dyn LlmInterface>,
+}
+
+impl ResearchSkill {
+    pub fn new(llm: Arc<dyn LlmInterface>) -> Self {
+        Self { llm }
+    }
+}
+
+#[async_trait]
+impl Skill for ResearchSkill {
+    fn definition(&self) -> LlmToolDefinition {
+        LlmToolDefinition {
+            name: "research".to_string(),
+            description: Some(
+                "Use this tool whenever the user wants actual information from the web — \
+                 for example: recipes, how-to guides, news, documentation, product details, \
+                 comparisons, or any question that requires reading a webpage. \
+                 This tool automatically searches the web AND reads the most relevant pages, \
+                 then returns a detailed, cited answer. \
+                 Examples of when to use research: 'find me a recipe', 'what is X', \
+                 'how does Y work', 'latest news on Z', 'compare A and B'. \
+                 Do NOT use web_search for these — always use research."
+                    .to_string(),
+            ),
+            parameters_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "The research question or topic to investigate in detail."
+                    }
+                },
+                "required": ["task"],
+                "additionalProperties": false
+            }),
+        }
+    }
+
+    async fn execute(&self, arguments: &Value) -> String {
+        let task = match arguments.get("task").and_then(Value::as_str) {
+            Some(t) => t,
+            None => return json!({ "ok": false, "error": "'task' is required." }).to_string(),
+        };
+
+        println!("[Research] Spawning subagent for: {}", task);
+
+        let system_prompt =
+            "You are a focused web research assistant. Your only job is to answer the given \
+             research task thoroughly and accurately.\n\
+             \n\
+             Guidelines:\n\
+             1. Use web_search to find relevant pages for the topic.\n\
+             2. Use web_fetch on at least 1-2 of the most relevant URLs to read the actual content.\n\
+             3. Synthesise the information into a clear, concise answer.\n\
+             4. Always include source URLs inline (Markdown links).\n\
+             5. If the first search yields no useful results, try a different query.\n\
+             6. Do NOT just list links — always read and summarise the content."
+                .to_string();
+
+        let mut sub_skills = SkillRegistry::new();
+        sub_skills.add(WebSearchSkill::new());
+        sub_skills.add(WebFetchSkill::new());
+
+        let sub_agent = Agent::subagent(Arc::clone(&self.llm), sub_skills, system_prompt);
+
+        // Pass the task as the user message so the subagent processes it naturally.
+        let result = sub_agent.process(task, 0).await;
+
+        println!("[Research] Subagent done");
+
+        json!({
+            "ok": true,
+            "task": task,
+            "result": result,
+        })
+        .to_string()
+    }
+}

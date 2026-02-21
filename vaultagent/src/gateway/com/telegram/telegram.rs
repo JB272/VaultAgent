@@ -1,3 +1,6 @@
+mod format;
+use format::md_to_telegram_html;
+
 use crate::gateway::com::{Gateway, get_non_empty_env, is_token_service_enabled};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
 use crate::reasoning::transcription::TranscriptionService;
@@ -207,9 +210,12 @@ impl TelegramBot {
         chat_id: i64,
         text: impl Into<String>,
     ) -> Result<Message, Box<dyn Error + Send + Sync>> {
+        let text_str = text.into();
+        let html = md_to_telegram_html(&text_str);
         let request = SendMessageRequest {
             chat_id,
-            text: text.into(),
+            text: html,
+            parse_mode: "HTML".to_string(),
         };
 
         let response = self
@@ -549,6 +555,7 @@ struct ApiResponse<T> {
 struct SendMessageRequest {
     chat_id: i64,
     text: String,
+    parse_mode: String,
 }
 
 #[derive(Debug, Serialize)]
