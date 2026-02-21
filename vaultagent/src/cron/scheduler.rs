@@ -53,10 +53,10 @@ impl CronScheduler {
                         }
                     );
                     let cron_prompt = format!(
-                        "[SYSTEM: Dies ist eine geplante Erinnerung/Aufgabe mit dem Namen '{}', \
-                         die jetzt ausgelöst wurde. Führe die folgende Aufgabe AUS und antworte \
-                         dem Nutzer direkt mit dem Ergebnis. Erstelle KEINE neue Erinnerung, \
-                         sondern liefere die Antwort/Erinnerung direkt ab.]\n\n{}",
+                        "[SYSTEM: This is a scheduled reminder/task named '{}', \
+                         and it has just been triggered. Execute the following task NOW and respond \
+                         directly to the user with the result. Do NOT create a new reminder; \
+                         deliver the answer/reminder directly.]\n\n{}",
                         job.name, job.prompt
                     );
                     writer

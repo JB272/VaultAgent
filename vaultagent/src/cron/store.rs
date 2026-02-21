@@ -88,17 +88,17 @@ impl CronStore {
     async fn persist(&self) -> Result<(), String> {
         let jobs = self.jobs.lock().await;
         let json = serde_json::to_string_pretty(&*jobs)
-            .map_err(|e| format!("Serialisierung fehlgeschlagen: {}", e))?;
+            .map_err(|e| format!("Serialization failed: {}", e))?;
         drop(jobs);
 
         // Verzeichnis erstellen falls nötig
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Verzeichnis erstellen fehlgeschlagen: {}", e))?;
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
 
         std::fs::write(&self.path, json)
-            .map_err(|e| format!("Datei schreiben fehlgeschlagen: {}", e))?;
+            .map_err(|e| format!("Failed to write file: {}", e))?;
         Ok(())
     }
 

@@ -33,14 +33,14 @@ impl WebSearchSkill {
         let response = match self.client.get(&url).send().await {
             Ok(r) => r,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string();
+                return json!({ "ok": false, "error": format!("HTTP error: {}", e) }).to_string();
             }
         };
 
         let body = match response.text().await {
             Ok(t) => t,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("Body lesen fehlgeschlagen: {}", e) })
+                return json!({ "ok": false, "error": format!("Failed to read response body: {}", e) })
                     .to_string();
             }
         };
@@ -48,7 +48,7 @@ impl WebSearchSkill {
         let ddg: DdgResponse = match serde_json::from_str(&body) {
             Ok(r) => r,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("JSON-Parse-Fehler: {}", e) })
+                return json!({ "ok": false, "error": format!("JSON parse error: {}", e) })
                     .to_string();
             }
         };
@@ -118,7 +118,7 @@ impl WebSearchSkill {
                 json!({
                     "ok": true,
                     "results": [],
-                    "message": format!("Keine Ergebnisse für '{}'. Versuche eine andere Formulierung oder nutze eine URL direkt.", query),
+                    "message": format!("No results for '{}'. Try different wording or fetch a URL directly.", query),
                 })
                 .to_string()
             }
@@ -158,7 +158,7 @@ impl WebSearchSkill {
         let response = match self.client.get(url).send().await {
             Ok(r) => r,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("HTTP-Fehler: {}", e) }).to_string();
+                return json!({ "ok": false, "error": format!("HTTP error: {}", e) }).to_string();
             }
         };
 
@@ -174,7 +174,7 @@ impl WebSearchSkill {
         let body = match response.text().await {
             Ok(t) => t,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("Body lesen fehlgeschlagen: {}", e) })
+                return json!({ "ok": false, "error": format!("Failed to read response body: {}", e) })
                     .to_string();
             }
         };
@@ -185,7 +185,7 @@ impl WebSearchSkill {
         // Auf vernünftige Länge kürzen (max ~4000 Zeichen)
         let truncated = if text.len() > 4000 {
             format!(
-                "{}...\n[gekürzt, {} Zeichen gesamt]",
+                "{}...\n[truncated, {} total characters]",
                 &text[..4000],
                 text.len()
             )
@@ -209,9 +209,9 @@ impl Skill for WebSearchSkill {
         LlmToolDefinition {
             name: "web_search".to_string(),
             description: Some(
-                "Sucht im Web nach Informationen oder ruft eine URL ab. \
-                 Nutze 'query' für eine Websuche oder 'url' um eine bestimmte Seite zu lesen. \
-                 Beides gleichzeitig ist auch möglich."
+                "Searches the web for information or fetches a URL. \
+                 Use 'query' for web search or 'url' to read a specific page. \
+                 You can also provide both."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -219,11 +219,11 @@ impl Skill for WebSearchSkill {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Suchbegriff für die Websuche."
+                        "description": "Search query for web lookup."
                     },
                     "url": {
                         "type": "string",
-                        "description": "URL einer Webseite, deren Inhalt abgerufen werden soll."
+                        "description": "URL of a webpage to fetch and parse."
                     }
                 },
                 "additionalProperties": false
@@ -249,7 +249,7 @@ impl Skill for WebSearchSkill {
             (Some(q), None) => self.search_ddg(q).await,
             (None, Some(u)) => self.fetch_url(u).await,
             (None, None) => {
-                json!({ "ok": false, "error": "Entweder 'query' oder 'url' muss angegeben werden." })
+                json!({ "ok": false, "error": "Either 'query' or 'url' must be provided." })
                     .to_string()
             }
         }

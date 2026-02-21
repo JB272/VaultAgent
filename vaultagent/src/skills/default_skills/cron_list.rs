@@ -23,7 +23,7 @@ impl Skill for CronListSkill {
         LlmToolDefinition {
             name: "cron_list".to_string(),
             description: Some(
-                "Listet alle geplanten Cron-Jobs auf. Zeigt Name, Zeitplan, Status und ID."
+                "Lists all scheduled cron jobs. Shows name, schedule, status, and ID."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -41,7 +41,7 @@ impl Skill for CronListSkill {
             return json!({
                 "ok": true,
                 "jobs": [],
-                "message": "Keine Cron-Jobs vorhanden."
+                "message": "No cron jobs found."
             }).to_string();
         }
 
@@ -49,8 +49,8 @@ impl Skill for CronListSkill {
             .iter()
             .map(|job| {
                 let schedule_desc = match &job.schedule {
-                    Schedule::At { at } => format!("einmalig am {}", at.format("%d.%m.%Y %H:%M UTC")),
-                    Schedule::Every { every_secs } => format!("alle {} Sekunden", every_secs),
+                    Schedule::At { at } => format!("once at {}", at.format("%Y-%m-%d %H:%M UTC")),
+                    Schedule::Every { every_secs } => format!("every {} seconds", every_secs),
                     Schedule::Cron { expr, tz } => {
                         let tz_str = tz.as_deref().unwrap_or("UTC");
                         format!("cron '{}' ({})", expr, tz_str)

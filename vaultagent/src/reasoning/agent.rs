@@ -39,7 +39,7 @@ impl Agent {
     /// an welchen Chat die Antwort gehen soll.
     pub async fn process(&self, user_text: &str, chat_id: i64) -> String {
         let Some(llm) = &self.llm else {
-            return "LLM ist nicht konfiguriert. Setze LLM_API_KEY, um Antworten zu erhalten."
+            return "LLM is not configured. Set LLM_API_KEY to receive responses."
                 .to_string();
         };
 
@@ -66,7 +66,7 @@ impl Agent {
         let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
         let now_utc = chrono::Utc::now().to_rfc3339();
         let system_prompt = format!(
-            "{}\n\n## Aktuelle Session\n- Chat-ID: {}\n- Zeitzone des Nutzers: {}\n- Aktuelle UTC-Zeit: {}\n- WICHTIG: Wenn der Nutzer eine Uhrzeit nennt (z.B. \"um 19:20\"), ist das IMMER in seiner lokalen Zeitzone ({}). Du musst diese Zeit in UTC umrechnen, bevor du sie an cron_add übergibst. Beispiel: 19:20 CET = 18:20 UTC.",
+            "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.",
             base_prompt, chat_id, user_tz, now_utc, user_tz
         );
 
@@ -90,7 +90,7 @@ impl Agent {
 
             let response = match llm.chat(request).await {
                 Ok(value) => value,
-                Err(err) => return format!("Fehler beim LLM-Aufruf: {}", err),
+                Err(err) => return format!("LLM call failed: {}", err),
             };
 
             // Keine Tool-Calls → fertige Antwort
@@ -99,7 +99,7 @@ impl Agent {
                 if content.is_empty() {
                     let fallback = response
                         .refusal
-                        .unwrap_or_else(|| "Keine Antwort vom LLM erhalten.".to_string());
+                        .unwrap_or_else(|| "No response received from the LLM.".to_string());
                     // Antwort in History speichern
                     self.history.lock().await.push(LlmMessage {
                         role: LlmRole::Assistant,
@@ -140,7 +140,7 @@ impl Agent {
                     Some(result) => result,
                     None => json!({
                         "ok": false,
-                        "error": format!("Unbekanntes Tool: {}", tool_call.name),
+                        "error": format!("Unknown tool: {}", tool_call.name),
                     })
                     .to_string(),
                 };
@@ -155,6 +155,6 @@ impl Agent {
             }
         }
 
-        "Ich konnte die Tool-Ausführung nicht abschließen (zu viele Schritte).".to_string()
+        "Could not complete tool execution (too many steps).".to_string()
     }
 }

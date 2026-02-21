@@ -25,13 +25,13 @@ impl Skill for CronAddSkill {
         LlmToolDefinition {
             name: "cron_add".to_string(),
             description: Some(
-                "Plant eine zeitgesteuerte Aufgabe. Der Agent wird zum geplanten Zeitpunkt \
-                 mit dem angegebenen Prompt geweckt und die Antwort wird im Chat angezeigt. \
-                 Nutze dies für Erinnerungen, tägliche Zusammenfassungen, Wetterberichte etc.\n\
-                 WICHTIG zum Prompt: Formuliere den Prompt als DIREKTE AUFGABE für den Zeitpunkt \
-                 der Ausführung, z.B. 'Sag dem Nutzer, dass er jetzt das Fenster schließen soll.' \
-                 oder 'Fasse die Wetterlage in Berlin zusammen.' \
-                 NICHT als Erinnerungs-Anfrage wie 'Erinnere mich an...'."
+                "Schedules a timed task. At the scheduled time, the agent is invoked \
+                 with the given prompt and posts the result in chat. \
+                 Use this for reminders, daily summaries, weather checks, etc.\n\
+                 IMPORTANT for prompt text: write the prompt as a DIRECT TASK for execution time, \
+                 for example 'Tell the user to close the window now.' \
+                 or 'Summarize today's weather in Berlin.' \
+                 NOT as a reminder request like 'Remind me to...'."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -39,28 +39,28 @@ impl Skill for CronAddSkill {
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Kurzer Name für den Job, z.B. 'Wetterbericht morgens'"
+                        "description": "Short job name, e.g. 'Morning weather report'"
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "Der Prompt, der zum geplanten Zeitpunkt an das LLM gesendet wird. Schreibe ihn so, als würdest du eine Aufgabe stellen, z.B. 'Wie wird das Wetter heute in Berlin? Gib eine kurze Zusammenfassung.'"
+                        "description": "Prompt sent to the LLM at execution time. Write it as a direct task, e.g. 'What is the weather in Berlin today? Give a short summary.'"
                     },
                     "schedule_kind": {
                         "type": "string",
                         "enum": ["at", "cron"],
-                        "description": "'at' für einmalig (ISO-8601-Zeitpunkt), 'cron' für wiederkehrend (Cron-Ausdruck)"
+                        "description": "'at' for one-time execution (ISO-8601 timestamp), 'cron' for recurring execution (cron expression)"
                     },
                     "at": {
                         "type": "string",
-                        "description": "Nur bei schedule_kind='at': ISO-8601-Zeitpunkt in UTC. WICHTIG: Rechne die vom Nutzer genannte Lokalzeit in UTC um! Beispiel: Nutzer sagt '19:20' in Europe/Berlin (CET=UTC+1) → '2026-02-20T18:20:00Z'"
+                        "description": "Only for schedule_kind='at': ISO-8601 timestamp in UTC. IMPORTANT: convert user-local time to UTC first. Example: user says '19:20' in Europe/Berlin (CET=UTC+1) -> '2026-02-20T18:20:00Z'"
                     },
                     "cron_expr": {
                         "type": "string",
-                        "description": "Nur bei schedule_kind='cron': 5-Feld-Cron-Ausdruck, z.B. '30 6 * * *' für täglich um 6:30"
+                        "description": "Only for schedule_kind='cron': 5-field cron expression, e.g. '30 6 * * *' for daily at 06:30"
                     },
                     "chat_id": {
                         "type": "integer",
-                        "description": "Die Chat-ID, an die die Antwort gesendet wird (aktuelle Chat-ID verwenden)"
+                        "description": "Chat ID where the response should be sent (use the current chat ID)"
                     }
                 },
                 "required": ["name", "prompt", "schedule_kind", "chat_id"],
@@ -88,11 +88,11 @@ impl Skill for CronAddSkill {
             .unwrap_or(0);
 
         if prompt.trim().is_empty() {
-            return json!({ "ok": false, "error": "Prompt darf nicht leer sein." }).to_string();
+            return json!({ "ok": false, "error": "Prompt must not be empty." }).to_string();
         }
 
         if chat_id == 0 {
-            return json!({ "ok": false, "error": "chat_id fehlt." }).to_string();
+            return json!({ "ok": false, "error": "chat_id is missing." }).to_string();
         }
 
         let schedule = match schedule_kind {
@@ -104,7 +104,7 @@ impl Skill for CronAddSkill {
                         if at < Utc::now() {
                             return json!({
                                 "ok": false,
-                                "error": format!("Der Zeitpunkt '{}' liegt in der Vergangenheit. Bitte einen zukünftigen Zeitpunkt wählen.", at_str)
+                                "error": format!("Timestamp '{}' is in the past. Please provide a future timestamp.", at_str)
                             })
                             .to_string();
                         }
@@ -113,7 +113,7 @@ impl Skill for CronAddSkill {
                     Err(_) => {
                         return json!({
                             "ok": false,
-                            "error": format!("Ungültiges ISO-8601-Datum: '{}'", at_str)
+                            "error": format!("Invalid ISO-8601 timestamp: '{}'", at_str)
                         })
                         .to_string();
                     }
@@ -125,13 +125,13 @@ impl Skill for CronAddSkill {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if expr.is_empty() {
-                    return json!({ "ok": false, "error": "cron_expr fehlt." }).to_string();
+                    return json!({ "ok": false, "error": "cron_expr is missing." }).to_string();
                 }
                 // Validieren
                 if croner::Cron::new(expr).parse().is_err() {
                     return json!({
                         "ok": false,
-                        "error": format!("Ungültiger Cron-Ausdruck: '{}'", expr)
+                        "error": format!("Invalid cron expression: '{}'", expr)
                     })
                     .to_string();
                 }
@@ -143,7 +143,7 @@ impl Skill for CronAddSkill {
             _ => {
                 return json!({
                     "ok": false,
-                    "error": "schedule_kind muss 'at' oder 'cron' sein."
+                    "error": "schedule_kind must be 'at' or 'cron'."
                 })
                 .to_string();
             }
@@ -170,12 +170,12 @@ impl Skill for CronAddSkill {
             Ok(_) => json!({
                 "ok": true,
                 "job_id": job_id,
-                "message": format!("Job '{}' wurde erstellt.", job_name),
+                "message": format!("Job '{}' created.", job_name),
             })
             .to_string(),
             Err(err) => json!({
                 "ok": false,
-                "error": format!("Job konnte nicht gespeichert werden: {}", err),
+                "error": format!("Failed to save job: {}", err),
             })
             .to_string(),
         }

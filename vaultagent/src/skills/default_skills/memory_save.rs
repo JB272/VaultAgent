@@ -23,8 +23,8 @@ impl Skill for MemorySaveSkill {
         LlmToolDefinition {
             name: "memory_save".to_string(),
             description: Some(
-                "Speichert eine Erinnerung. Nutze 'daily' für kurzfristige Notizen \
-                 (Tageslog) oder 'long_term' für dauerhaft wichtige Fakten (MEMORY.md)."
+                "Saves a memory entry. Use 'daily' for short-term notes \
+                 (daily log) or 'long_term' for persistent important facts (MEMORY.md)."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -32,12 +32,12 @@ impl Skill for MemorySaveSkill {
                 "properties": {
                     "entry": {
                         "type": "string",
-                        "description": "Der Text, der gespeichert werden soll."
+                        "description": "Text to store."
                     },
                     "storage": {
                         "type": "string",
                         "enum": ["daily", "long_term"],
-                        "description": "Wo gespeichert wird: 'daily' = heutiges Tageslog, 'long_term' = MEMORY.md"
+                        "description": "Storage target: 'daily' = today's log, 'long_term' = MEMORY.md"
                     }
                 },
                 "required": ["entry"],
@@ -53,7 +53,7 @@ impl Skill for MemorySaveSkill {
             .unwrap_or_default();
 
         if entry.trim().is_empty() {
-            return json!({ "ok": false, "error": "Eintrag darf nicht leer sein." }).to_string();
+            return json!({ "ok": false, "error": "Entry must not be empty." }).to_string();
         }
 
         let storage = arguments
@@ -70,7 +70,7 @@ impl Skill for MemorySaveSkill {
             Ok(()) => json!({
                 "ok": true,
                 "storage": storage,
-                "message": format!("Erinnerung gespeichert ({}).", storage),
+                "message": format!("Memory saved ({}).", storage),
             })
             .to_string(),
             Err(err) => json!({

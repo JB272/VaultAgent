@@ -23,8 +23,8 @@ impl Skill for MemorySearchSkill {
         LlmToolDefinition {
             name: "memory_search".to_string(),
             description: Some(
-                "Durchsucht dein Gedächtnis (MEMORY.md + alle Tageslogs) nach einem Suchbegriff. \
-                 Gibt alle Treffer mit Dateiname und Zeilennummer zurück."
+                "Searches your memory (MEMORY.md + all daily logs) for a query. \
+                 Returns all matches with file name and line number."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -32,7 +32,7 @@ impl Skill for MemorySearchSkill {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Suchbegriff (case-insensitive)."
+                        "description": "Search query (case-insensitive)."
                     }
                 },
                 "required": ["query"],
@@ -48,7 +48,7 @@ impl Skill for MemorySearchSkill {
             .unwrap_or_default();
 
         if query.trim().is_empty() {
-            return json!({ "ok": false, "error": "Suchbegriff darf nicht leer sein." })
+            return json!({ "ok": false, "error": "Query must not be empty." })
                 .to_string();
         }
 
@@ -58,7 +58,7 @@ impl Skill for MemorySearchSkill {
             json!({
                 "ok": true,
                 "results": [],
-                "message": format!("Keine Treffer für '{}'.", query),
+                "message": format!("No matches for '{}'.", query),
             })
             .to_string()
         } else {

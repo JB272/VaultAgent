@@ -13,9 +13,9 @@ impl Skill for ListDirectorySkill {
         LlmToolDefinition {
             name: "list_directory".to_string(),
             description: Some(
-                "Listet Dateien und Ordner in einem Verzeichnis auf (wie `ls`). \
-                 Kann zum Navigieren und Erkunden der Verzeichnisstruktur verwendet werden. \
-                 Gibt für jeden Eintrag Name, Typ (file/dir) und Größe zurück."
+                "Lists files and directories in a folder (similar to `ls`). \
+                 Can be used to navigate and explore the directory structure. \
+                 Returns each entry with name, type (file/dir), and size."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -23,7 +23,7 @@ impl Skill for ListDirectorySkill {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relativer Verzeichnispfad, z.B. 'soul/memory' oder '.' für das aktuelle Verzeichnis"
+                        "description": "Relative directory path, e.g. 'soul/memory' or '.' for current directory"
                     }
                 },
                 "required": ["path"],
@@ -49,7 +49,7 @@ impl Skill for ListDirectorySkill {
             Err(err) => {
                 return json!({
                     "ok": false,
-                    "error": format!("Verzeichnis konnte nicht gelesen werden: {}", err),
+                    "error": format!("Failed to read directory: {}", err),
                 })
                 .to_string();
             }
@@ -108,7 +108,7 @@ fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
 
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return Err("Nur relative Pfade im Workspace sind erlaubt.".to_string());
+        return Err("Only relative paths inside the workspace are allowed.".to_string());
     }
 
     if candidate.components().any(|component| {
@@ -117,7 +117,7 @@ fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err("Pfad enthält unzulässige Segmente (.. oder Root).".to_string());
+        return Err("Path contains forbidden segments (.. or root).".to_string());
     }
 
     Ok(PathBuf::from(path))

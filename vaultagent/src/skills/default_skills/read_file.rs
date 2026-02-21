@@ -13,14 +13,14 @@ impl Skill for ReadFileSkill {
         LlmToolDefinition {
             name: "read_file".to_string(),
             description: Some(
-                "Liest eine Textdatei aus einem relativen Pfad im Workspace.".to_string(),
+                "Reads a text file from a relative path in the workspace.".to_string(),
             ),
             parameters_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relativer Dateipfad, z.B. notes/test.txt"
+                        "description": "Relative file path, e.g. notes/test.txt"
                     }
                 },
                 "required": ["path"],
@@ -45,7 +45,7 @@ impl Skill for ReadFileSkill {
                 .to_string(),
                 Err(err) => json!({
                     "ok": false,
-                    "error": format!("Datei konnte nicht gelesen werden: {}", err),
+                    "error": format!("Failed to read file: {}", err),
                 })
                 .to_string(),
             },
@@ -60,12 +60,12 @@ impl Skill for ReadFileSkill {
 
 fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
-        return Err("Pfad darf nicht leer sein.".to_string());
+        return Err("Path must not be empty.".to_string());
     }
 
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return Err("Nur relative Pfade im Workspace sind erlaubt.".to_string());
+        return Err("Only relative paths inside the workspace are allowed.".to_string());
     }
 
     if candidate.components().any(|component| {
@@ -74,7 +74,7 @@ fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err("Pfad enthält unzulässige Segmente (.. oder Root).".to_string());
+        return Err("Path contains forbidden segments (.. or root).".to_string());
     }
 
     Ok(PathBuf::from(path))

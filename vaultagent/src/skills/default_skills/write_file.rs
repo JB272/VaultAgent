@@ -13,7 +13,7 @@ impl Skill for WriteFileSkill {
         LlmToolDefinition {
             name: "write_file".to_string(),
             description: Some(
-                "Schreibt Inhalt in eine Datei im Workspace. Erstellt Datei/Ordner falls nötig."
+                "Writes content to a file in the workspace. Creates file/directories if needed."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -21,11 +21,11 @@ impl Skill for WriteFileSkill {
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relativer Dateipfad, z.B. test.txt"
+                        "description": "Relative file path, e.g. test.txt"
                     },
                     "content": {
                         "type": "string",
-                        "description": "Inhalt, der in die Datei geschrieben werden soll"
+                        "description": "Content to write into the file"
                     }
                 },
                 "required": ["path", "content"],
@@ -51,7 +51,7 @@ impl Skill for WriteFileSkill {
                         if let Err(err) = tokio::fs::create_dir_all(parent).await {
                             return json!({
                                 "ok": false,
-                                "error": format!("Ordner konnten nicht erstellt werden: {}", err),
+                                "error": format!("Failed to create directories: {}", err),
                             })
                             .to_string();
                         }
@@ -67,7 +67,7 @@ impl Skill for WriteFileSkill {
                     .to_string(),
                     Err(err) => json!({
                         "ok": false,
-                        "error": format!("Datei konnte nicht geschrieben werden: {}", err),
+                        "error": format!("Failed to write file: {}", err),
                     })
                     .to_string(),
                 }
@@ -83,19 +83,19 @@ impl Skill for WriteFileSkill {
 
 fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
-        return Err("Pfad darf nicht leer sein.".to_string());
+        return Err("Path must not be empty.".to_string());
     }
 
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        return Err("Nur relative Pfade im Workspace sind erlaubt.".to_string());
+        return Err("Only relative paths inside the workspace are allowed.".to_string());
     }
 
     if candidate
         .components()
         .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
     {
-        return Err("Pfad enthält unzulässige Segmente (.. oder Root).".to_string());
+        return Err("Path contains forbidden segments (.. or root).".to_string());
     }
 
     Ok(PathBuf::from(path))

@@ -154,7 +154,7 @@ impl TelegramBot {
                                         if !allowed.contains(&message.chat.id) {
                                             let _ = bot.send_message(
                                                 message.chat.id,
-                                                format!("⛔ Kein Zugriff. Deine Chat-ID: {}\nBitte den Bot-Admin, deine ID freizuschalten.", message.chat.id)
+                                                format!("⛔ Access denied. Your chat ID: {}\nPlease ask the bot admin to allowlist your ID.", message.chat.id)
                                             ).await;
                                             continue;
                                         }
@@ -165,7 +165,7 @@ impl TelegramBot {
                                     // /reboot Kommando: Prozess beenden, systemd startet neu
                                     if message.text.as_deref() == Some("/reboot") {
                                         let _ = bot
-                                            .send_message(message.chat.id, "♻️ Starte neu…")
+                                            .send_message(message.chat.id, "♻️ Rebooting...")
                                             .await;
                                         // Offset bestätigen, damit die Nachricht nicht erneut kommt
                                         let _ = bot
@@ -461,7 +461,7 @@ async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Opt
                 match transcription_service.transcribe(data, mime).await {
                     Ok(text) if !text.trim().is_empty() => {
                         println!("[Telegram][Voice] Transcription: {}", text);
-                        Some(format!("[Sprachnachricht] {}", text))
+                        Some(format!("[Voice message] {}", text))
                     }
                     Ok(_) => {
                         eprintln!("[Telegram][Voice] Transcription returned empty text.");
@@ -506,7 +506,7 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
             if !allowed.contains(&message.chat.id) {
                 let _ = state.bot.send_message(
                     message.chat.id,
-                    format!("⛔ Kein Zugriff. Deine Chat-ID: {}\nBitte den Bot-Admin, deine ID freizuschalten.", message.chat.id)
+                    format!("⛔ Access denied. Your chat ID: {}\nPlease ask the bot admin to allowlist your ID.", message.chat.id)
                 ).await;
                 return StatusCode::OK;
             }
@@ -519,7 +519,7 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
         if message.text.as_deref() == Some("/reboot") {
             let _ = state
                 .bot
-                .send_message(message.chat.id, "♻️ Starte neu…")
+                .send_message(message.chat.id, "♻️ Rebooting...")
                 .await;
             println!("[Telegram] Reboot requested by chat {}", message.chat.id);
             std::process::exit(0);

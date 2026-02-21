@@ -14,13 +14,13 @@ import datetime
 
 DESCRIPTION = {
     "name": "current_datetime",
-    "description": "Gibt das aktuelle Datum und die Uhrzeit zurück.",
+    "description": "Returns the current date and time.",
     "parameters": {
         "type": "object",
         "properties": {
             "format": {
                 "type": "string",
-                "description": "Optional: strftime-Format, z.B. '%Y-%m-%d %H:%M:%S'. Standard: ISO 8601."
+                "description": "Optional: strftime format, e.g. '%Y-%m-%d %H:%M:%S'. Default: ISO 8601."
             }
         },
         "additionalProperties": False
@@ -36,7 +36,7 @@ def execute(arguments: dict) -> dict:
         try:
             formatted = now.strftime(fmt)
         except Exception as e:
-            return {"ok": False, "error": f"Ungültiges Format: {e}"}
+            return {"ok": False, "error": f"Invalid format: {e}"}
     else:
         formatted = now.isoformat()
 
@@ -45,7 +45,7 @@ def execute(arguments: dict) -> dict:
 
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Nutzung: script.py --describe | --execute '{...}'"}))
+        print(json.dumps({"error": "Usage: script.py --describe | --execute '{...}'"}))
         sys.exit(1)
 
     command = sys.argv[1]
@@ -57,12 +57,12 @@ def main():
         try:
             arguments = json.loads(args_json)
         except json.JSONDecodeError as e:
-            print(json.dumps({"ok": False, "error": f"Ungültiges JSON: {e}"}))
+            print(json.dumps({"ok": False, "error": f"Invalid JSON: {e}"}))
             sys.exit(1)
         result = execute(arguments)
         print(json.dumps(result))
     else:
-        print(json.dumps({"error": f"Unbekannter Befehl: {command}"}))
+        print(json.dumps({"error": f"Unknown command: {command}"}))
         sys.exit(1)
 
 

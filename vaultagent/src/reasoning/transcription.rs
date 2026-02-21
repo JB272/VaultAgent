@@ -73,7 +73,7 @@ impl TranscriptionService {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("Whisper API Fehler {}: {}", status, body).into());
+            return Err(format!("Whisper API error {}: {}", status, body).into());
         }
 
         let result: serde_json::Value = response.json().await?;

@@ -23,8 +23,8 @@ impl Skill for CronRemoveSkill {
         LlmToolDefinition {
             name: "cron_remove".to_string(),
             description: Some(
-                "Entfernt einen geplanten Cron-Job anhand seiner ID. \
-                 Nutze cron_list, um die IDs der vorhandenen Jobs zu sehen."
+                "Removes a scheduled cron job by its ID. \
+                 Use cron_list to see available job IDs."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -32,7 +32,7 @@ impl Skill for CronRemoveSkill {
                 "properties": {
                     "job_id": {
                         "type": "string",
-                        "description": "Die ID des zu löschenden Jobs."
+                        "description": "ID of the job to delete."
                     }
                 },
                 "required": ["job_id"],
@@ -45,21 +45,21 @@ impl Skill for CronRemoveSkill {
         let job_id = arguments.get("job_id").and_then(Value::as_str).unwrap_or("");
 
         if job_id.is_empty() {
-            return json!({ "ok": false, "error": "job_id fehlt." }).to_string();
+            return json!({ "ok": false, "error": "job_id is missing." }).to_string();
         }
 
         match self.store.remove(job_id).await {
             Ok(true) => json!({
                 "ok": true,
-                "message": format!("Job '{}' wurde gelöscht.", job_id),
+                "message": format!("Job '{}' deleted.", job_id),
             }).to_string(),
             Ok(false) => json!({
                 "ok": false,
-                "error": format!("Kein Job mit ID '{}' gefunden.", job_id),
+                "error": format!("No job found with ID '{}'.", job_id),
             }).to_string(),
             Err(err) => json!({
                 "ok": false,
-                "error": format!("Fehler beim Löschen: {}", err),
+                "error": format!("Failed to delete job: {}", err),
             }).to_string(),
         }
     }

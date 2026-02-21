@@ -16,7 +16,7 @@ impl Personality {
                 "[Soul][Personality] File not found ({}), using fallback prompt.",
                 path.display()
             );
-            "Du bist ein hilfreicher Assistent. Antworte auf Deutsch.".to_string()
+            "You are a helpful assistant. Answer in English.".to_string()
         });
 
         println!("[Soul][Personality] Loaded: {}", path.display());

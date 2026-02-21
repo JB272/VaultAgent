@@ -51,7 +51,7 @@ impl Memory {
         let long_term = self.load_long_term();
         if !long_term.trim().is_empty() {
             parts.push(format!(
-                "## Langzeitgedächtnis (MEMORY.md)\n\n{}",
+                "## Long-term Memory (MEMORY.md)\n\n{}",
                 long_term.trim()
             ));
         }
@@ -60,7 +60,7 @@ impl Memory {
         if !yesterday.trim().is_empty() {
             let date = Local::now().date_naive() - chrono::Duration::days(1);
             parts.push(format!(
-                "## Erinnerungen von gestern ({})\n\n{}",
+                "## Memories from Yesterday ({})\n\n{}",
                 date.format("%d.%m.%Y"),
                 yesterday.trim()
             ));
@@ -70,7 +70,7 @@ impl Memory {
         if !today.trim().is_empty() {
             let date = Local::now().date_naive();
             parts.push(format!(
-                "## Erinnerungen von heute ({})\n\n{}",
+                "## Memories from Today ({})\n\n{}",
                 date.format("%d.%m.%Y"),
                 today.trim()
             ));
@@ -80,7 +80,7 @@ impl Memory {
             String::new()
         } else {
             format!(
-                "\n\n---\n# Dein Gedächtnis\n\n{}\n---\n",
+                "\n\n---\n# Your Memory\n\n{}\n---\n",
                 parts.join("\n\n")
             )
         }
@@ -98,7 +98,7 @@ impl Memory {
 
         if needs_header {
             let date = Local::now().date_naive();
-            content.push_str(&format!("# Tageslog {}\n\n", date.format("%d.%m.%Y")));
+            content.push_str(&format!("# Daily Log {}\n\n", date.format("%d.%m.%Y")));
         }
 
         let time = Local::now().format("%H:%M");
@@ -109,10 +109,10 @@ impl Memory {
             .append(true)
             .open(&path)
             .await
-            .map_err(|e| format!("Konnte Tageslog nicht öffnen: {}", e))?
+            .map_err(|e| format!("Could not open daily log: {}", e))?
             .write_all(content.as_bytes())
             .await
-            .map_err(|e| format!("Konnte nicht ins Tageslog schreiben: {}", e))?;
+            .map_err(|e| format!("Could not write to daily log: {}", e))?;
 
         Ok(())
     }
@@ -128,10 +128,10 @@ impl Memory {
             .append(true)
             .open(&path)
             .await
-            .map_err(|e| format!("Konnte MEMORY.md nicht öffnen: {}", e))?
+            .map_err(|e| format!("Could not open MEMORY.md: {}", e))?
             .write_all(content.as_bytes())
             .await
-            .map_err(|e| format!("Konnte nicht in MEMORY.md schreiben: {}", e))?;
+            .map_err(|e| format!("Could not write to MEMORY.md: {}", e))?;
 
         Ok(())
     }
