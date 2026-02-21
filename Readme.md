@@ -158,13 +158,13 @@ Or just send `/reboot` in Telegram.
 
 The bot responds to these slash commands directly, without involving the LLM:
 
-| Command | Description |
-|---|---|
-| `/tools` | List all available skills/tools registered in this instance |
-| `/stats` | Show today's LLM token usage (requests, prompt tokens, completion tokens) |
-| `/models` | Show the currently active LLM model |
-| `/models <name>` | Switch to a different model at runtime (e.g. `/models gpt-4o`) |
-| `/reboot` | Restart the service (systemd will bring it back up automatically) |
+| Command          | Description                                                               |
+| ---------------- | ------------------------------------------------------------------------- |
+| `/tools`         | List all available skills/tools registered in this instance               |
+| `/stats`         | Show today's LLM token usage (requests, prompt tokens, completion tokens) |
+| `/models`        | Show the currently active LLM model                                       |
+| `/models <name>` | Switch to a different model at runtime (e.g. `/models gpt-4o`)            |
+| `/reboot`        | Restart the service (systemd will bring it back up automatically)         |
 
 ## Project Structure
 

@@ -114,8 +114,8 @@ impl TelegramBot {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Register commands with Telegram so they show in the command menu.
         let commands = [
-            ("tools",  "List all available skills/tools"),
-            ("stats",  "Today's LLM token usage"),
+            ("tools", "List all available skills/tools"),
+            ("stats", "Today's LLM token usage"),
             ("models", "Show or switch the active LLM model"),
             ("reboot", "Restart the service"),
         ];
@@ -477,12 +477,30 @@ async fn handle_command(text: &str, bot: &TelegramBot) -> Option<String> {
         return Some("No usage data available.".to_string());
     }
 
-    // /models — show current model
+    // /models — list all available models
     if text == "/models" {
         if let Some(ref llm) = bot.llm {
+            let current = llm.current_model();
+            let available = llm.list_models().await;
+            if available.is_empty() {
+                return Some(format!(
+                    "🤖 <b>Current model:</b> <code>{}</code>\n\nCould not fetch model list from provider.\nUse <code>/models &lt;name&gt;</code> to switch.",
+                    current
+                ));
+            }
+            let list = available
+                .iter()
+                .map(|m| {
+                    if m == &current {
+                        format!("✅ <code>{m}</code>")
+                    } else {
+                        format!("• <code>{m}</code>")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
             return Some(format!(
-                "🤖 <b>Current model:</b> <code>{}</code>\n\nUse <code>/models &lt;name&gt;</code> to switch.",
-                llm.current_model()
+                "🤖 <b>Available models</b> (✅ = active):\n\n{list}\n\nUse <code>/models &lt;name&gt;</code> to switch."
             ));
         }
         return Some("No LLM configured.".to_string());

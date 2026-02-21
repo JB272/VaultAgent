@@ -294,6 +294,34 @@ impl LlmInterface for OpenAiCompatibleClient {
     fn set_model(&self, model: String) {
         *self.default_model.lock().unwrap() = model;
     }
+
+    async fn list_models(&self) -> Vec<String> {
+        let response = self
+            .client
+            .get(format!("{}/models", self.base_url.trim_end_matches('/')))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(r) if r.status().is_success() => r,
+            _ => return Vec::new(),
+        };
+
+        #[derive(serde::Deserialize)]
+        struct ModelEntry { id: String }
+        #[derive(serde::Deserialize)]
+        struct ModelList { data: Vec<ModelEntry> }
+
+        match response.json::<ModelList>().await {
+            Ok(list) => {
+                let mut ids: Vec<String> = list.data.into_iter().map(|m| m.id).collect();
+                ids.sort();
+                ids
+            }
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

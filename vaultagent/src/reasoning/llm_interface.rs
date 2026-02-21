@@ -173,4 +173,8 @@ pub trait LlmInterface: Send + Sync {
 
 	/// Switches the active model at runtime.
 	fn set_model(&self, model: String);
+
+	/// Returns all models available from the provider, sorted.
+	/// Returns an empty Vec if the provider does not support listing.
+	async fn list_models(&self) -> Vec<String>;
 }
