@@ -97,8 +97,7 @@ impl CronStore {
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
 
-        std::fs::write(&self.path, json)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        std::fs::write(&self.path, json).map_err(|e| format!("Failed to write file: {}", e))?;
         Ok(())
     }
 
