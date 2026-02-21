@@ -161,9 +161,13 @@ impl TelegramBot {
 
                                     // /reboot Kommando: Prozess beenden, systemd startet neu
                                     if message.text.as_deref() == Some("/reboot") {
-                                        let _ = bot.send_message(message.chat.id, "♻️ Starte neu…").await;
+                                        let _ = bot
+                                            .send_message(message.chat.id, "♻️ Starte neu…")
+                                            .await;
                                         // Offset bestätigen, damit die Nachricht nicht erneut kommt
-                                        let _ = bot.get_updates(Some(update.update_id + 1), Some(0)).await;
+                                        let _ = bot
+                                            .get_updates(Some(update.update_id + 1), Some(0))
+                                            .await;
                                         println!("Reboot angefordert von Chat {}", message.chat.id);
                                         std::process::exit(0);
                                     }
@@ -504,7 +508,10 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
 
         // /reboot Kommando: Prozess beenden, systemd startet neu
         if message.text.as_deref() == Some("/reboot") {
-            let _ = state.bot.send_message(message.chat.id, "♻️ Starte neu…").await;
+            let _ = state
+                .bot
+                .send_message(message.chat.id, "♻️ Starte neu…")
+                .await;
             println!("Reboot angefordert von Chat {}", message.chat.id);
             std::process::exit(0);
         }
