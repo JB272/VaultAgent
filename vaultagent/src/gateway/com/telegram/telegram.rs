@@ -159,6 +159,15 @@ impl TelegramBot {
 
                                     bot.known_chat_ids.lock().await.insert(message.chat.id);
 
+                                    // /reboot Kommando: Prozess beenden, systemd startet neu
+                                    if message.text.as_deref() == Some("/reboot") {
+                                        let _ = bot.send_message(message.chat.id, "♻️ Starte neu…").await;
+                                        // Offset bestätigen, damit die Nachricht nicht erneut kommt
+                                        let _ = bot.get_updates(Some(update.update_id + 1), Some(0)).await;
+                                        println!("Reboot angefordert von Chat {}", message.chat.id);
+                                        std::process::exit(0);
+                                    }
+
                                     if let Some(text) =
                                         extract_text_or_transcribe(&bot, message).await
                                     {
@@ -492,6 +501,13 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
 
         // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
         state.known_chat_ids.lock().await.insert(message.chat.id);
+
+        // /reboot Kommando: Prozess beenden, systemd startet neu
+        if message.text.as_deref() == Some("/reboot") {
+            let _ = state.bot.send_message(message.chat.id, "♻️ Starte neu…").await;
+            println!("Reboot angefordert von Chat {}", message.chat.id);
+            std::process::exit(0);
+        }
 
         if let Some(text) = extract_text_or_transcribe(&state.bot, message).await {
             let action = IncomingAction::Chat(ChatAction {
