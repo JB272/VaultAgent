@@ -167,4 +167,10 @@ pub trait LlmInterface: Send + Sync {
 	async fn chat(&self, request: LlmChatRequest) -> Result<LlmChatResponse, LlmError>;
 
 	fn provider_name(&self) -> &'static str;
+
+	/// Returns the currently active model name.
+	fn current_model(&self) -> String;
+
+	/// Switches the active model at runtime.
+	fn set_model(&self, model: String);
 }

@@ -39,6 +39,11 @@ impl SkillRegistry {
         self.skills.iter().map(|s| s.definition()).collect()
     }
 
+    /// Returns the names of all registered skills.
+    pub fn skill_names(&self) -> Vec<String> {
+        self.skills.iter().map(|s| s.definition().name.clone()).collect()
+    }
+
     /// Führt einen Tool-Call anhand des Namens aus.
     /// Gibt `None` zurück, wenn kein Skill mit dem Namen registriert ist.
     pub async fn execute(&self, name: &str, arguments: &Value) -> Option<String> {

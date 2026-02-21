@@ -27,7 +27,7 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
 - **Soul**: Personality and memory defined in Markdown files (`soul/personality.md`, `soul/memory/`)
 - **Timezone-aware**: Converts user-local times to UTC for scheduling
 - **Chat ID allowlist**: Only trusted Telegram users can interact with the bot
-- **`/reboot` command**: Restart the service remotely via Telegram
+- **Telegram commands**: Built-in slash commands for runtime control (see below)
 - **Deploy script**: One-command cross-compile and deploy to a Raspberry Pi via SSH + systemd
 - **Web Chat**: Basic browser-based chat interface (localhost)
 
@@ -153,6 +153,18 @@ ssh user@server 'sudo systemctl stop vaultagent'      # stop
 ```
 
 Or just send `/reboot` in Telegram.
+
+## Telegram Commands
+
+The bot responds to these slash commands directly, without involving the LLM:
+
+| Command | Description |
+|---|---|
+| `/tools` | List all available skills/tools registered in this instance |
+| `/stats` | Show today's LLM token usage (requests, prompt tokens, completion tokens) |
+| `/models` | Show the currently active LLM model |
+| `/models <name>` | Switch to a different model at runtime (e.g. `/models gpt-4o`) |
+| `/reboot` | Restart the service (systemd will bring it back up automatically) |
 
 ## Project Structure
 

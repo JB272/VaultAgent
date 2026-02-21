@@ -84,7 +84,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     // ── Agent ───────────────────────────────────────────
-    let agent = Agent::new(llm, skills, soul);
+    let agent = Arc::new(Agent::new(llm.clone(), skills, soul));
 
     // ── Incoming Queue ──────────────────────────────────
     let incoming = IncomingActionQueue::new();
@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let website = setup_website(incoming.register_service()).await?;
     gateways.add(website.client);
 
-    if let Some(telegram) = setup_telegram(incoming.register_service()).await {
+    if let Some(telegram) = setup_telegram(incoming.register_service(), Arc::clone(&agent), llm).await {
         gateways.add(telegram);
     }
 

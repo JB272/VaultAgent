@@ -2,6 +2,7 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::reasoning::usage::UsageCounter;
 use crate::reasoning::llm_interface::{
     LlmChatRequest, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
 };
@@ -20,6 +21,7 @@ pub struct Agent {
     history: Mutex<Vec<LlmMessage>>,
     max_rounds: usize,
     max_history: usize,
+    pub usage: Option<Arc<UsageCounter>>,
 }
 
 impl Agent {
@@ -33,13 +35,13 @@ impl Agent {
             history: Mutex::new(Vec::new()),
             max_rounds: 4,
             max_history: 50,
+            usage: Some(Arc::new(UsageCounter::new())),
         }
     }
 
     /// Creates a focused subagent with a fixed system prompt (no Soul, no history carry-over).
     /// Runs up to 8 tool-call rounds — suited for deep research or multi-step delegated tasks.
-    pub fn subagent(
-        llm: Arc<dyn LlmInterface>,
+    pub fn subagent(        llm: Arc<dyn LlmInterface>,
         skills: SkillRegistry,
         system_prompt: String,
     ) -> Self {
@@ -51,7 +53,13 @@ impl Agent {
             history: Mutex::new(Vec::new()),
             max_rounds: 8,
             max_history: 20,
+            usage: None, // subagents don't track usage separately
         }
+    }
+
+    /// Returns the names of all registered skills (used by the /tools command).
+    pub fn skill_names(&self) -> Vec<String> {
+        self.skills.skill_names()
     }
 
     /// Verarbeitet eine Chat-Nachricht und gibt die Antwort des Agenten zurück.
@@ -122,6 +130,13 @@ impl Agent {
                 Ok(value) => value,
                 Err(err) => return format!("LLM call failed: {}", err),
             };
+
+            // Record token usage
+            if let Some(ref counter) = self.usage {
+                if let Some(ref u) = response.usage {
+                    counter.record(u.prompt_tokens, u.completion_tokens).await;
+                }
+            }
 
             // Keine Tool-Calls → fertige Antwort
             if response.tool_calls.is_empty() {

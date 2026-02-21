@@ -3,6 +3,8 @@ use format::md_to_telegram_html;
 
 use crate::gateway::com::{Gateway, get_non_empty_env, is_token_service_enabled};
 use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, IncomingActionWriter};
+use crate::reasoning::agent::Agent;
+use crate::reasoning::llm_interface::LlmInterface;
 use crate::reasoning::transcription::TranscriptionService;
 use async_trait::async_trait;
 use axum::{
@@ -16,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TelegramBot {
     client: Client,
     base_url: String,
@@ -25,6 +27,8 @@ pub struct TelegramBot {
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
     allowed_chat_ids: Option<HashSet<i64>>,
     transcription: Option<Arc<TranscriptionService>>,
+    agent: Option<Arc<Agent>>,
+    llm: Option<Arc<dyn LlmInterface>>,
 }
 
 impl TelegramBot {
@@ -40,6 +44,8 @@ impl TelegramBot {
             known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
             allowed_chat_ids: None,
             transcription: None,
+            agent: None,
+            llm: None,
         }
     }
 
@@ -106,6 +112,19 @@ impl TelegramBot {
         &self,
         incoming_writer: IncomingActionWriter,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        // Register commands with Telegram so they show in the command menu.
+        let commands = [
+            ("tools",  "List all available skills/tools"),
+            ("stats",  "Today's LLM token usage"),
+            ("models", "Show or switch the active LLM model"),
+            ("reboot", "Restart the service"),
+        ];
+        if let Err(err) = self.set_my_commands(&commands).await {
+            eprintln!("[Telegram] Could not register commands: {}", err);
+        } else {
+            println!("[Telegram] Slash commands registered with Telegram.");
+        }
+
         if let Some(ref webhook_url) = self.webhook_url {
             // Webhook-Modus: öffentliche URL setzen und HTTP-Server starten
             self.set_webhook(webhook_url.clone()).await?;
@@ -165,20 +184,12 @@ impl TelegramBot {
 
                                     bot.known_chat_ids.lock().await.insert(message.chat.id);
 
-                                    // /reboot Kommando: Prozess beenden, systemd startet neu
-                                    if message.text.as_deref() == Some("/reboot") {
-                                        let _ = bot
-                                            .send_message(message.chat.id, "♻️ Rebooting...")
-                                            .await;
-                                        // Offset bestätigen, damit die Nachricht nicht erneut kommt
-                                        let _ = bot
-                                            .get_updates(Some(update.update_id + 1), Some(0))
-                                            .await;
-                                        println!(
-                                            "[Telegram] Reboot requested by chat {}",
-                                            message.chat.id
-                                        );
-                                        std::process::exit(0);
+                                    // Handle slash commands before forwarding to the agent.
+                                    if let Some(text) = message.text.as_deref() {
+                                        if let Some(reply) = handle_command(text, &bot).await {
+                                            let _ = bot.send_html(message.chat.id, reply).await;
+                                            continue;
+                                        }
                                     }
 
                                     if let Some(text) =
@@ -212,9 +223,18 @@ impl TelegramBot {
     ) -> Result<Message, Box<dyn Error + Send + Sync>> {
         let text_str = text.into();
         let html = md_to_telegram_html(&text_str);
+        self.send_html(chat_id, html).await
+    }
+
+    /// Send a message that is already valid Telegram HTML — skips the Markdown converter.
+    pub async fn send_html(
+        &self,
+        chat_id: i64,
+        html: impl Into<String>,
+    ) -> Result<Message, Box<dyn Error + Send + Sync>> {
         let request = SendMessageRequest {
             chat_id,
-            text: html,
+            text: html.into(),
             parse_mode: "HTML".to_string(),
         };
 
@@ -235,6 +255,37 @@ impl TelegramBot {
 
         body.result
             .ok_or_else(|| "Telegram API returned no message".into())
+    }
+
+    /// Registers slash commands with Telegram so they appear in the command menu.
+    pub async fn set_my_commands(
+        &self,
+        commands: &[(&str, &str)],
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let commands: Vec<BotCommand> = commands
+            .iter()
+            .map(|(cmd, desc)| BotCommand {
+                command: cmd.to_string(),
+                description: desc.to_string(),
+            })
+            .collect();
+        let request = SetMyCommandsRequest { commands };
+
+        let response = self
+            .client
+            .post(format!("{}/setMyCommands", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<bool> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+        Ok(())
     }
 
     pub async fn send_chat_action(
@@ -390,9 +441,78 @@ impl TelegramBot {
     }
 }
 
-pub async fn setup_telegram(incoming_writer: IncomingActionWriter) -> Option<TelegramBot> {
+/// Handles slash commands. Returns `Some(reply)` if handled, `None` to forward to the agent.
+async fn handle_command(text: &str, bot: &TelegramBot) -> Option<String> {
+    let text = text.trim();
+
+    if text == "/reboot" {
+        println!("[Telegram] Reboot requested");
+        // Send the reply, then exit after a short delay so the message is delivered.
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            std::process::exit(0);
+        });
+        return Some("♻️ Rebooting...".to_string());
+    }
+
+    if text == "/tools" {
+        if let Some(ref agent) = bot.agent {
+            let names = agent.skill_names();
+            let list = names
+                .iter()
+                .map(|n| format!("• <code>{n}</code>"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Some(format!("🛠 <b>Available tools:</b>\n\n{list}"));
+        }
+        return Some("No agent configured.".to_string());
+    }
+
+    if text == "/stats" {
+        if let Some(ref agent) = bot.agent {
+            if let Some(ref usage) = agent.usage {
+                return Some(usage.stats_message().await);
+            }
+        }
+        return Some("No usage data available.".to_string());
+    }
+
+    // /models — show current model
+    if text == "/models" {
+        if let Some(ref llm) = bot.llm {
+            return Some(format!(
+                "🤖 <b>Current model:</b> <code>{}</code>\n\nUse <code>/models &lt;name&gt;</code> to switch.",
+                llm.current_model()
+            ));
+        }
+        return Some("No LLM configured.".to_string());
+    }
+
+    // /models <name> — switch model
+    if let Some(model) = text.strip_prefix("/models ") {
+        let model = model.trim().to_string();
+        if model.is_empty() {
+            return Some("Usage: <code>/models &lt;model-name&gt;</code>".to_string());
+        }
+        if let Some(ref llm) = bot.llm {
+            llm.set_model(model.clone());
+            return Some(format!("✅ Switched to model <code>{model}</code>"));
+        }
+        return Some("No LLM configured.".to_string());
+    }
+
+    None
+}
+
+pub async fn setup_telegram(
+    incoming_writer: IncomingActionWriter,
+    agent: Arc<Agent>,
+    llm: Option<Arc<dyn LlmInterface>>,
+) -> Option<TelegramBot> {
     if TelegramBot::is_enabled() {
-        if let Some(telegram) = TelegramBot::from_env() {
+        if let Some(mut telegram) = TelegramBot::from_env() {
+            telegram.agent = Some(agent);
+            telegram.llm = llm;
             match telegram.start(incoming_writer).await {
                 Ok(()) => Some(telegram),
                 Err(err) => {
@@ -521,14 +641,12 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
         // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
         state.known_chat_ids.lock().await.insert(message.chat.id);
 
-        // /reboot Kommando: Prozess beenden, systemd startet neu
-        if message.text.as_deref() == Some("/reboot") {
-            let _ = state
-                .bot
-                .send_message(message.chat.id, "♻️ Rebooting...")
-                .await;
-            println!("[Telegram] Reboot requested by chat {}", message.chat.id);
-            std::process::exit(0);
+        // Handle slash commands
+        if let Some(text) = message.text.as_deref() {
+            if let Some(reply) = handle_command(text, &state.bot).await {
+                let _ = state.bot.send_html(message.chat.id, reply).await;
+                return StatusCode::OK;
+            }
         }
 
         if let Some(text) = extract_text_or_transcribe(&state.bot, message).await {
@@ -575,6 +693,17 @@ struct GetUpdatesRequest {
 #[derive(Debug, Serialize)]
 struct SetWebhookRequest {
     url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BotCommand {
+    command: String,
+    description: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SetMyCommandsRequest {
+    commands: Vec<BotCommand>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::sync::{Arc, Mutex};
 
 use crate::reasoning::llm_interface::{
     LlmChatRequest, LlmChatResponse, LlmContentPart, LlmError, LlmInterface, LlmMessage,
@@ -13,7 +14,8 @@ pub struct OpenAiCompatibleClient {
     client: Client,
     api_key: String,
     base_url: String,
-    default_model: String,
+    /// Shared mutable model name — switchable at runtime via /models.
+    default_model: Arc<Mutex<String>>,
 }
 
 impl OpenAiCompatibleClient {
@@ -26,7 +28,7 @@ impl OpenAiCompatibleClient {
             client: Client::new(),
             api_key: api_key.into(),
             base_url: base_url.into(),
-            default_model: default_model.into(),
+            default_model: Arc::new(Mutex::new(default_model.into())),
         }
     }
 
@@ -148,7 +150,7 @@ impl OpenAiCompatibleClient {
 impl LlmInterface for OpenAiCompatibleClient {
     async fn chat(&self, request: LlmChatRequest) -> Result<LlmChatResponse, LlmError> {
         let model = if request.model.is_empty() {
-            self.default_model.clone()
+            self.default_model.lock().unwrap().clone()
         } else {
             request.model
         };
@@ -283,6 +285,14 @@ impl LlmInterface for OpenAiCompatibleClient {
 
     fn provider_name(&self) -> &'static str {
         "openai-compatible"
+    }
+
+    fn current_model(&self) -> String {
+        self.default_model.lock().unwrap().clone()
+    }
+
+    fn set_model(&self, model: String) {
+        *self.default_model.lock().unwrap() = model;
     }
 }
 
