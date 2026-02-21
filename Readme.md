@@ -1,6 +1,6 @@
 # VaultAgent
 
-A personal AI assistant written in Rust, heavily inspired by [OpenClaw](https://github.com/openclaw/openclaw). We loved the concept of OpenClaw — a self-hostable, tool-using AI agent with a persistent soul and memory — and wanted to rebuild it from scratch in Rust for performance, low resource usage, and the joy of systems programming.
+A personal AI assistant written in Rust, heavily inspired by [OpenClaw](https://github.com/openclaw/openclaw). We loved the concept of OpenClaw as a self-hostable, tool-using AI agent with a persistent soul and memory, and wanted to rebuild it from scratch in Rust for performance, low resource usage, and the joy of systems programming.
 
 VaultAgent runs on a Raspberry Pi (or any Linux server), connects to Telegram, and acts as your personal assistant with long-term memory, scheduled tasks, voice transcription, and extensible skills.
 
@@ -8,32 +8,32 @@ VaultAgent runs on a Raspberry Pi (or any Linux server), connects to Telegram, a
 
 I loved using [OpenClaw](https://github.com/openclaw/openclaw), but I was always afraid to leave it running overnight. What if a bug caused it to loop and rack up massive API costs? What if my API keys got leaked? The thought of waking up to a surprise bill kept me from truly trusting the setup.
 
-VaultAgent is my attempt to rebuild the same idea — a personal, self-hosted AI agent with a soul and memory — but with safety and control as a first-class priority. Written in Rust, it compiles to a single static binary, runs on minimal resources, and gives me the confidence to let it run 24/7 without worrying about runaway costs or exposed credentials.
+VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI agent with a soul and memory, but with safety and control as a first-class priority. Written in Rust, it compiles to a single static binary, runs on minimal resources, and gives me the confidence to let it run 24/7 without worrying about runaway costs or exposed credentials.
 
 ## Features
 
 ### Working
 
-- **Telegram Bot** — Polling mode (no public URL needed) and webhook mode
-- **LLM Integration** — OpenAI-compatible API (GPT-4o-mini, or any compatible provider)
-- **Tool/Skill System** — The agent can call tools during conversations:
-  - `read_file` / `write_file` / `list_directory` — File system access within the workspace
-  - `web_search` — Search the web or fetch URLs
-  - `memory_save` / `memory_search` — Persistent long-term memory (Markdown files)
-  - `cron_add` / `cron_list` / `cron_remove` — Schedule reminders and recurring tasks
-  - **Python skills** — Drop a `.py` script into `skills/` and it's auto-loaded as a tool
-- **Voice Messages** — Telegram voice memos are transcribed via Whisper and processed as text
-- **Cron Scheduler** — Schedule one-shot or recurring tasks ("remind me at 19:30 to close the window")
-- **Soul** — Personality and memory defined in Markdown files (`soul/personality.md`, `soul/memory/`)
-- **Timezone-aware** — Converts user-local times to UTC for scheduling
-- **Chat ID allowlist** — Only trusted Telegram users can interact with the bot
-- **`/reboot` command** — Restart the service remotely via Telegram
-- **Deploy script** — One-command cross-compile and deploy to a Raspberry Pi via SSH + systemd
-- **Web Chat** — Basic browser-based chat interface (localhost)
+- **Telegram Bot**: Polling mode (no public URL needed) and webhook mode
+- **LLM Integration**: OpenAI-compatible API (GPT-4o-mini, or any compatible provider)
+- **Tool/Skill System**: The agent can call tools during conversations:
+  - `read_file` / `write_file` / `list_directory`: File system access within the workspace
+  - `web_search`: Search the web or fetch URLs
+  - `memory_save` / `memory_search`: Persistent long-term memory (Markdown files)
+  - `cron_add` / `cron_list` / `cron_remove`: Schedule reminders and recurring tasks
+  - **Python skills**: Drop a `.py` script into `skills/` and it's auto-loaded as a tool
+- **Voice Messages**: Telegram voice memos are transcribed via Whisper and processed as text
+- **Cron Scheduler**: Schedule one-shot or recurring tasks ("remind me at 19:30 to close the window")
+- **Soul**: Personality and memory defined in Markdown files (`soul/personality.md`, `soul/memory/`)
+- **Timezone-aware**: Converts user-local times to UTC for scheduling
+- **Chat ID allowlist**: Only trusted Telegram users can interact with the bot
+- **`/reboot` command**: Restart the service remotely via Telegram
+- **Deploy script**: One-command cross-compile and deploy to a Raspberry Pi via SSH + systemd
+- **Web Chat**: Basic browser-based chat interface (localhost)
 
 ### Not Yet Implemented
 
-- Persistent chat history (currently in-memory only — lost on restart)
+- Persistent chat history (currently in-memory only, lost on restart)
 - Streaming responses
 - Multi-user support (separate conversation histories per chat)
 - Image understanding / vision
@@ -51,13 +51,13 @@ VaultAgent is my attempt to rebuild the same idea — a personal, self-hosted AI
        └───────┬───────────┘
                ▼
        ┌───────────────┐
-       │ IncomingAction │
-       │    Queue       │
+       │ IncomingAction│
+       │    Queue      │
        └───────┬───────┘
                ▼
        ┌───────────────┐      ┌────────────┐
        │    Agent      │◄────►│   Skills   │
-       │  (LLM loop)  │      │  Registry  │
+       │  (LLM loop)   │      │  Registry  │
        └───────┬───────┘      └────────────┘
                │
        ┌───────┴───────┐
@@ -71,10 +71,10 @@ VaultAgent is my attempt to rebuild the same idea — a personal, self-hosted AI
 
 ### Prerequisites
 
-- **Rust** (edition 2024) — [Install](https://rustup.rs/)
-- **Telegram Bot Token** — Create one via [@BotFather](https://t.me/BotFather)
+- **Rust** (edition 2024): [Install](https://rustup.rs/)
+- **Telegram Bot Token**: Create one via [@BotFather](https://t.me/BotFather)
 - **OpenAI API Key** (or any OpenAI-compatible provider)
-- **For deployment:** A Linux aarch64 server (e.g. Raspberry Pi 3/4/5 with 64-bit OS)
+- **For deployment**: A Linux aarch64 server (e.g. Raspberry Pi 3/4/5 with 64-bit OS)
 
 ### Setup
 
@@ -182,10 +182,10 @@ vaultagent/
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. See the [LICENSE](LICENSE) file for details.
 
 You are free to use, modify, and distribute this software, as long as any modified versions (including those running as a network service) remain open source under the same license.
 
 ## Acknowledgments
 
-This project is inspired by [OpenClaw](https://github.com/openclaw/openclaw), an open-source AI agent framework. We share the same vision of a personal, self-hosted AI assistant with a soul, memory, and extensible skills — just rebuilt in Rust.
+This project is inspired by [OpenClaw](https://github.com/openclaw/openclaw), an open-source AI agent framework. We share the same vision of a personal, self-hosted AI assistant with a soul, memory, and extensible skills, just rebuilt in Rust.
