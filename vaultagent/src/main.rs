@@ -99,6 +99,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         gateways.add(telegram);
     }
 
+    let gateways = Arc::new(gateways);
+
     // ── Cron Scheduler ──────────────────────────────────
     CronScheduler::start(Arc::clone(&cron_store), incoming.register_service());
     println!("[Main][Cron] Scheduler started");
@@ -113,8 +115,25 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     chat.chat_id, chat.text
                 );
 
-                gateways.broadcast_typing(chat.chat_id, true).await;
+                let gw = Arc::clone(&gateways);
+                let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                let chat_id = chat.chat_id;
+
+                // Keep re-sending typing every 4s — Telegram hides it after ~5s.
+                let typing_task = tokio::spawn(async move {
+                    loop {
+                        gw.broadcast_typing(chat_id, true).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                            _ = &mut cancel_rx => break,
+                        }
+                    }
+                });
+
                 let reply = agent.process(&chat.text, chat.chat_id).await;
+                let _ = cancel_tx.send(());
+                typing_task.await.ok();
+
                 gateways.broadcast_reply(chat.chat_id, &reply).await;
                 gateways.broadcast_typing(chat.chat_id, false).await;
             }
@@ -125,10 +144,24 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     cron_action.job_name, cron_action.chat_id
                 );
 
-                gateways.broadcast_typing(cron_action.chat_id, true).await;
-                let reply = agent
-                    .process(&cron_action.prompt, cron_action.chat_id)
-                    .await;
+                let gw = Arc::clone(&gateways);
+                let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                let chat_id = cron_action.chat_id;
+
+                let typing_task = tokio::spawn(async move {
+                    loop {
+                        gw.broadcast_typing(chat_id, true).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                            _ = &mut cancel_rx => break,
+                        }
+                    }
+                });
+
+                let reply = agent.process(&cron_action.prompt, cron_action.chat_id).await;
+                let _ = cancel_tx.send(());
+                typing_task.await.ok();
+
                 gateways.broadcast_reply(cron_action.chat_id, &reply).await;
                 gateways.broadcast_typing(cron_action.chat_id, false).await;
             }

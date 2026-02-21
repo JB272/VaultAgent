@@ -70,7 +70,10 @@ impl Skill for ResearchSkill {
             .and_then(Value::as_str)
             .unwrap_or("English");
 
-        println!("[Research] Spawning subagent for: {} (language: {})", task, language);
+        println!(
+            "[Research] Spawning subagent for: {} (language: {})",
+            task, language
+        );
 
         let system_prompt = format!(
             "You are a focused web research assistant. Your only job is to answer the given \
