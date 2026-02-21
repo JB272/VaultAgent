@@ -73,24 +73,27 @@ VaultAgent runs on a Raspberry Pi (or any Linux server), connects to Telegram, a
 ### Setup
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/your-username/vaultagent.git
    cd vaultagent
    ```
 
 2. **Create your `.env` file**
+
    ```bash
    cp vaultagent/.env_example vaultagent/.env
    ```
+
    Fill in your `TELEGRAM_BOT_TOKEN` and `LLM_API_KEY`.
 
 3. **Set your trusted Telegram chat IDs**
-   
+
    Edit `vaultagent/trusted_chat_ids.md` and add your Telegram chat ID (one per line).  
    Don't know your ID? Send a message to the bot — unauthorized users get a reply with their chat ID.
 
 4. **Customize the personality** (optional)
-   
+
    Edit `vaultagent/soul/personality.md` to change how the agent behaves.
 
 5. **Run locally**
@@ -104,6 +107,7 @@ VaultAgent runs on a Raspberry Pi (or any Linux server), connects to Telegram, a
 The included `deploy.sh` cross-compiles for `aarch64-unknown-linux-musl` (statically linked, no dependencies), copies everything to your server, and sets up a systemd service.
 
 **First-time setup:**
+
 ```bash
 # Install the cross-compilation target
 rustup target add aarch64-unknown-linux-musl
@@ -113,6 +117,7 @@ brew install filosottile/musl-cross/musl-cross --with-aarch64
 ```
 
 **Deploy:**
+
 ```bash
 ./deploy.sh                   # prompts for server IP
 ./deploy.sh 192.168.1.42      # or pass it directly
@@ -120,12 +125,14 @@ DEPLOY_HOST=jarvis ./deploy.sh  # or via env var
 ```
 
 The script will:
+
 - Cross-compile a release binary
 - SSH into the server (one password prompt, reused for all operations)
 - Copy the binary, `.env`, soul, skills, cron jobs, and trusted chat IDs
 - Set up and start a systemd service (`vaultagent.service`)
 
 **Useful commands after deploy:**
+
 ```bash
 ssh user@server 'journalctl -u vaultagent -f'        # view logs
 ssh user@server 'sudo systemctl restart vaultagent'   # restart
