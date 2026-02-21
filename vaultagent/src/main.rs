@@ -158,7 +158,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                 });
 
-                let reply = agent.process(&cron_action.prompt, cron_action.chat_id).await;
+                let reply = agent
+                    .process(&cron_action.prompt, cron_action.chat_id)
+                    .await;
                 let _ = cancel_tx.send(());
                 typing_task.await.ok();
 
