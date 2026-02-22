@@ -97,20 +97,16 @@ impl Skill for ShellExecuteSkill {
                 })
                 .to_string()
             }
-            Ok(Err(err)) => {
-                json!({
-                    "ok": false,
-                    "error": format!("Failed to execute command: {}", err),
-                })
-                .to_string()
-            }
-            Err(_) => {
-                json!({
-                    "ok": false,
-                    "error": "Command timed out after 120 seconds.",
-                })
-                .to_string()
-            }
+            Ok(Err(err)) => json!({
+                "ok": false,
+                "error": format!("Failed to execute command: {}", err),
+            })
+            .to_string(),
+            Err(_) => json!({
+                "ok": false,
+                "error": "Command timed out after 120 seconds.",
+            })
+            .to_string(),
         }
     }
 }
@@ -119,10 +115,6 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!(
-            "{}…\n[truncated, {} total bytes]",
-            &s[..max_len],
-            s.len()
-        )
+        format!("{}…\n[truncated, {} total bytes]", &s[..max_len], s.len())
     }
 }
