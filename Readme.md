@@ -61,11 +61,11 @@ What is not there yet:
 VaultAgent uses a split-process security model: the host orchestrator handles Telegram, LLM calls, and secrets; all tool execution runs in a sandboxed Docker worker.
 
 ```
-┌─────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────┐
 │  HOST (Raspberry Pi / Server)                  │
-│                                                 │
-│  .env.secure (API keys, tokens)                 │
-│                                                 │
+│                                                │
+│  .env.secure (API keys, tokens)                │
+│                                                │
 │  ┌─────────────┐  ┌─────────────┐              │
 │  │  Telegram   │  │  Web Chat   │              │
 │  │  Gateway    │  │  Gateway    │              │
@@ -78,7 +78,7 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 │      │  (LLM loop)   │◄─┤(readonly)│           │
 │      └───────┬───────┘  └──────────┘           │
 │              │ HTTP (:9100)                    │
-└──────────────┼──────────────────────────────────┘
+└──────────────┼─────────────────────────────────┘
                │
 ┌──────────────┼──────────────────────────────────┐
 │  DOCKER SANDBOX                                 │
@@ -86,14 +86,14 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 │                                                 │
 │  ┌──────────────────────────────────┐           │
 │  │  Worker HTTP API (:9100)         │           │
-│  │  POST /execute      run skills    │           │
-│  │  GET  /definitions                │           │
+│  │  POST /execute      run skills   │           │
+│  │  GET  /definitions               │           │
 │  └──────────────────────────────────┘           │
 │                                                 │
 │  Mounted: soul/, skills/, cron/                 │
 │  Security: read-only rootfs, no-new-privileges, │
 │            cap_drop ALL, RAM/PID limits         │
-└──────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────┘
 ```
 
 ### Security properties
