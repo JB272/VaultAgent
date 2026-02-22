@@ -6,7 +6,7 @@ use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 use crate::soul::memory::Memory;
 
-/// Skill: Durchsucht das Gedächtnis nach einem Suchbegriff.
+/// Skill: Searches the memory for a query term.
 pub struct MemorySearchSkill {
     memory: Arc<Memory>,
 }

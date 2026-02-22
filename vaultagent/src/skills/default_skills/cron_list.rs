@@ -6,7 +6,7 @@ use crate::cron::store::{CronStore, Schedule};
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 
-/// Skill: Listet alle geplanten Cron-Jobs auf.
+/// Skill: Lists all scheduled cron jobs.
 pub struct CronListSkill {
     store: Arc<CronStore>,
 }
@@ -23,8 +23,7 @@ impl Skill for CronListSkill {
         LlmToolDefinition {
             name: "cron_list".to_string(),
             description: Some(
-                "Lists all scheduled cron jobs. Shows name, schedule, status, and ID."
-                    .to_string(),
+                "Lists all scheduled cron jobs. Shows name, schedule, status, and ID.".to_string(),
             ),
             parameters_schema: json!({
                 "type": "object",
@@ -42,7 +41,8 @@ impl Skill for CronListSkill {
                 "ok": true,
                 "jobs": [],
                 "message": "No cron jobs found."
-            }).to_string();
+            })
+            .to_string();
         }
 
         let job_summaries: Vec<Value> = jobs
@@ -73,6 +73,7 @@ impl Skill for CronListSkill {
             "ok": true,
             "count": job_summaries.len(),
             "jobs": job_summaries,
-        }).to_string()
+        })
+        .to_string()
     }
 }

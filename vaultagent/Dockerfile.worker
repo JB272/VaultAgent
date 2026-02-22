@@ -1,0 +1,21 @@
+# Sandbox worker image for VaultAgent.
+# Expects the pre-compiled static binary to be in the build context.
+#
+# Build:  docker build -f Dockerfile.worker -t vaultagent-worker .
+# Run:    see docker-compose.yml
+
+FROM python:3.11-slim-bookworm
+
+# Non-root user for the worker process
+RUN useradd --system --no-create-home --shell /bin/false worker
+
+# Copy the statically-linked binary (cross-compiled for the target arch)
+COPY vaultagent /usr/local/bin/vaultagent
+RUN chmod +x /usr/local/bin/vaultagent
+
+WORKDIR /workspace
+USER worker
+
+EXPOSE 9100
+
+CMD ["vaultagent", "--worker"]

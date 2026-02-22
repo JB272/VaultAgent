@@ -14,11 +14,12 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
 
 ### Working
 
+- **Sandboxed tool execution**: All skills/tools run inside a Docker container — LLM keys and Telegram tokens never enter the sandbox
 - **Telegram Bot**: Polling mode (no public URL needed) and webhook mode
 - **LLM Integration**: OpenAI-compatible API (GPT-4o-mini, or any compatible provider)
 - **Tool/Skill System**: The agent can call tools during conversations:
-  - `read_file` / `write_file` / `list_directory`: File system access within the workspace
-  - `web_search`: Search the web or fetch URLs
+  - `read_file` / `write_file` / `list_directory`: File system access within the sandbox workspace
+  - `web_search` / `web_fetch` / `research`: Search the web, fetch pages, or do deep research via subagent
   - `memory_save` / `memory_search`: Persistent long-term memory (Markdown files)
   - `cron_add` / `cron_list` / `cron_remove`: Schedule reminders and recurring tasks
   - **Python skills**: Drop a `.py` script into `skills/` and it's auto-loaded as a tool
@@ -28,7 +29,7 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
 - **Timezone-aware**: Converts user-local times to UTC for scheduling
 - **Chat ID allowlist**: Only trusted Telegram users can interact with the bot
 - **Telegram commands**: Built-in slash commands for runtime control (see below)
-- **Deploy script**: One-command cross-compile and deploy to a Raspberry Pi via SSH + systemd
+- **Deploy script**: One-command cross-compile and deploy to a Raspberry Pi via SSH + systemd + Docker
 - **Web Chat**: Basic browser-based chat interface (localhost)
 
 ### Not Yet Implemented
@@ -42,36 +43,60 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
 
 ## Architecture
 
+VaultAgent uses a **split-process security model**: the host orchestrator handles Telegram, LLM calls, and secrets, while all tool/skill execution runs inside a sandboxed Docker container.
+
 ```
-┌─────────────┐     ┌─────────────┐
-│  Telegram   │     │  Web Chat   │
-│  Gateway    │     │  Gateway    │
-└──────┬──────┘     └──────┬──────┘
-       │                   │
-       └───────┬───────────┘
-               ▼
-       ┌───────────────┐
-       │ IncomingAction│
-       │    Queue      │
-       └───────┬───────┘
-               ▼
-       ┌───────────────┐      ┌────────────┐
-       │    Agent      │◄────►│   Skills   │
-       │  (LLM loop)   │      │  Registry  │
-       └───────┬───────┘      └────────────┘
+┌─────────────────────────────────────────────────┐
+│  HOST (Raspberry Pi / Server)               │
+│                                              │
+│  .env.secure (API keys, tokens)              │
+│                                              │
+│  ┌─────────────┐  ┌─────────────┐       │
+│  │  Telegram  │  │  Web Chat   │       │
+│  │  Gateway   │  │  Gateway   │       │
+│  └──────┬──────┘  └──────┬──────┘       │
+│       │              │                │
+│       └──────┬───────┘                │
+│              ▼                         │
+│      ┌───────────────┐  ┌──────────┐  │
+│      │    Agent      │  │   Soul   │  │
+│      │  (LLM loop)   │◄─┤(readonly)│  │
+│      └───────┬───────┘  └──────────┘  │
+│              │ HTTP (:9100)            │
+└──────────────┼───────────────────────┘
                │
-       ┌───────┴───────┐
-       │     Soul      │
-       │ (personality  │
-       │  + memory)    │
-       └───────────────┘
+┌──────────────┼───────────────────────┐
+│  DOCKER SANDBOX                          │
+│  .env.docker (no secrets!)               │
+│                                          │
+│  ┌──────────────────────────────────┐  │
+│  │  Worker HTTP API (:9100)          │  │
+│  │  POST /execute  → run skills     │  │
+│  │  GET  /definitions               │  │
+│  └──────────────────────────────────┘  │
+│                                          │
+│  Mounted: soul/, skills/, cron/          │
+│  Security: read_only rootfs,             │
+│    no-new-privileges, cap_drop ALL,      │
+│    512 MB RAM, 100 PIDs                  │
+└────────────────────────────────────────┘
 ```
+
+**Key security properties:**
+
+- API keys (`LLM_API_KEY`, `TELEGRAM_BOT_TOKEN`) exist only on the host — never in the container
+- The agent (LLM) cannot see its own source code, binary, or environment variables
+- Container runs with read-only root filesystem, no capabilities, no privilege escalation
+- Resource-limited: 512 MB RAM, 100 PIDs
+- Worker API is authenticated with `WORKER_TOKEN`
+- Mounted directories (`soul/`, `skills/`, `cron/`) are the only writable paths
 
 ## Getting Started
 
 ### Prerequisites
 
 - **Rust** (edition 2024): [Install](https://rustup.rs/)
+- **Docker** (with Docker Compose): Required on the deployment server for the sandbox worker
 - **Telegram Bot Token**: Create one via [@BotFather](https://t.me/BotFather)
 - **OpenAI API Key** (or any OpenAI-compatible provider)
 - **For deployment**: A Linux aarch64 server (e.g. Raspberry Pi 3/4/5 with 64-bit OS)
@@ -85,13 +110,17 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
    cd vaultagent
    ```
 
-2. **Create your `.env` file**
+2. **Create your environment files**
 
    ```bash
-   cp vaultagent/.env_example vaultagent/.env
+   cp vaultagent/.env.secure.example vaultagent/.env.secure
+   cp vaultagent/.env.docker.example vaultagent/.env.docker
    ```
 
-   Fill in your `TELEGRAM_BOT_TOKEN` and `LLM_API_KEY`.
+   - `.env.secure` — **host-only**, contains `TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `WORKER_TOKEN`
+   - `.env.docker` — **sandbox-only**, contains `WORKER_TOKEN` (must match) and non-secret config
+
+   **Important:** Use the same `WORKER_TOKEN` value in both files.
 
 3. **Set your trusted Telegram chat IDs**
 
@@ -102,9 +131,20 @@ VaultAgent is my attempt to rebuild the same idea as a personal, self-hosted AI 
 
    Edit `vaultagent/soul/personality.md` to change how the agent behaves.
 
-5. **Run locally**
+5. **Run locally (development)**
+
+   First start the sandbox worker:
+
    ```bash
    cd vaultagent
+   docker compose up -d
+   ```
+
+   Then run the host orchestrator:
+
+   ```bash
+   # Source .env.secure for host secrets
+   export $(grep -v '^#' .env.secure | xargs)
    cargo run
    ```
 
@@ -141,7 +181,8 @@ The script will:
 
 - Cross-compile a release binary
 - SSH into the server (one password prompt, reused for all operations)
-- Copy the binary, `.env`, soul, skills, cron jobs, and trusted chat IDs
+- Copy the binary, env files, soul, skills, cron jobs, Docker files, and trusted chat IDs
+- Build and start the sandbox Docker container
 - Set up and start a systemd service (`vaultagent.service`)
 
 **Useful commands after deploy:**
@@ -171,7 +212,8 @@ The bot responds to these slash commands directly, without involving the LLM:
 ```
 vaultagent/
 ├── src/
-│   ├── main.rs                  # Entry point, event loop
+│   ├── main.rs                  # Entry point, event loop, --worker mode
+│   ├── worker.rs                # Sandbox worker HTTP server
 │   ├── gateway/                 # Communication channels
 │   │   ├── IncomingActionsQueue.rs
 │   │   └── com/
@@ -181,8 +223,10 @@ vaultagent/
 │   │   ├── agent.rs             # Agent orchestration (tool loop)
 │   │   ├── llm_interface.rs     # LLM abstraction
 │   │   ├── llmApis/openAI.rs    # OpenAI-compatible client
+│   │   ├── usage.rs             # Token usage tracking
 │   │   └── transcription.rs     # Whisper voice transcription
 │   ├── skills/                  # Tool/skill system
+│   │   ├── mod.rs               # SkillRegistry + RemoteSkillProxy
 │   │   ├── default_skills/      # Built-in skills (Rust)
 │   │   └── python_skill.rs      # Auto-loaded Python skills
 │   ├── cron/                    # Scheduled tasks
@@ -195,7 +239,10 @@ vaultagent/
 ├── skills/                      # Python skill scripts
 ├── cron/                        # Cron job storage
 ├── trusted_chat_ids.md          # Telegram allowlist
-├── .env_example                 # Environment template
+├── .env.secure.example          # Host secrets template
+├── .env.docker.example          # Sandbox env template
+├── Dockerfile.worker            # Sandbox container image
+├── docker-compose.yml           # Sandbox orchestration
 └── Cargo.toml
 ```
 

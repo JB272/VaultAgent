@@ -6,6 +6,7 @@ use crate::reasoning::agent::Agent;
 use crate::reasoning::llm_interface::{LlmInterface, LlmToolDefinition};
 use crate::skills::Skill;
 use crate::skills::SkillRegistry;
+use crate::skills::RemoteSkillProxy;
 
 use super::web_fetch::WebFetchSkill;
 use super::web_search::WebSearchSkill;
@@ -15,13 +16,26 @@ use super::web_search::WebSearchSkill;
 /// The subagent has access to `web_search` and `web_fetch`, runs for up to
 /// 8 rounds, and returns a synthesised, cited answer. Use this whenever you
 /// need detailed information from the web — not just a list of links.
+///
+/// When a `RemoteSkillProxy` is available (sandbox mode), the subagent's
+/// web skills are routed through the Docker worker instead of running locally.
 pub struct ResearchSkill {
     llm: Arc<dyn LlmInterface>,
+    remote: Option<RemoteSkillProxy>,
 }
 
 impl ResearchSkill {
+    /// Create a ResearchSkill.  In sandbox mode the parent `SkillRegistry`
+    /// will have a remote proxy — pass a clone here so sub-skills also go
+    /// through the worker.
     pub fn new(llm: Arc<dyn LlmInterface>) -> Self {
-        Self { llm }
+        Self { llm, remote: None }
+    }
+
+    /// Attach a remote proxy so the subagent's web skills run in the sandbox.
+    pub fn with_remote(mut self, remote: RemoteSkillProxy) -> Self {
+        self.remote = Some(remote);
+        self
     }
 }
 
@@ -92,9 +106,17 @@ impl Skill for ResearchSkill {
             language = language
         );
 
-        let mut sub_skills = SkillRegistry::new();
-        sub_skills.add(WebSearchSkill::new());
-        sub_skills.add(WebFetchSkill::new());
+        // Build the subagent's skill registry.
+        // In sandbox mode, web skills go through the Docker worker.
+        let sub_skills = match &self.remote {
+            Some(proxy) => SkillRegistry::new_with_remote(proxy.clone()),
+            None => {
+                let mut s = SkillRegistry::new();
+                s.add(WebSearchSkill::new());
+                s.add(WebFetchSkill::new());
+                s
+            }
+        };
 
         let sub_agent = Agent::subagent(Arc::clone(&self.llm), sub_skills, system_prompt);
 

@@ -59,8 +59,19 @@ ssh "$REMOTE_HOST" "mkdir -p $REMOTE_DIR/soul/memory $REMOTE_DIR/skills $REMOTE_
 # Binary
 scp "$BINARY" "$REMOTE_HOST:$REMOTE_DIR/$SERVICE_NAME"
 
-# .env (Secrets + Konfiguration — wird von systemd als EnvironmentFile geladen)
-scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
+# Environment files — use split env if available, fallback to single .env
+if [ -f "$PROJECT_DIR/.env.secure" ]; then
+    scp "$PROJECT_DIR/.env.secure" "$REMOTE_HOST:$REMOTE_DIR/.env.secure"
+    echo "   ✓ .env.secure (host secrets)"
+fi
+if [ -f "$PROJECT_DIR/.env.docker" ]; then
+    scp "$PROJECT_DIR/.env.docker" "$REMOTE_HOST:$REMOTE_DIR/.env.docker"
+    echo "   ✓ .env.docker (worker env)"
+fi
+if [ -f "$PROJECT_DIR/.env" ]; then
+    scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
+    echo "   ✓ .env (fallback)"
+fi
 
 # Trusted Chat-IDs
 if [ -f "$PROJECT_DIR/trusted_chat_ids.md" ]; then
@@ -78,16 +89,67 @@ if [ -f "$PROJECT_DIR/cron/jobs.json" ]; then
     scp "$PROJECT_DIR/cron/jobs.json" "$REMOTE_HOST:$REMOTE_DIR/cron/jobs.json"
 fi
 
+# Docker files (for sandbox mode)
+if [ -f "$PROJECT_DIR/Dockerfile.worker" ]; then
+    scp "$PROJECT_DIR/Dockerfile.worker" "$REMOTE_HOST:$REMOTE_DIR/Dockerfile.worker"
+    scp "$PROJECT_DIR/docker-compose.yml" "$REMOTE_HOST:$REMOTE_DIR/docker-compose.yml"
+    echo "   ✓ Docker sandbox files"
+fi
+
+# ── Validate required env files ──────────────────────────
+MISSING_ENV=false
+if [ ! -f "$PROJECT_DIR/.env.secure" ]; then
+    echo "❌ Missing: vaultagent/.env.secure"
+    echo "   Copy the template:  cp vaultagent/.env.secure.example vaultagent/.env.secure"
+    echo "   Then fill in your secrets (Telegram token, LLM key, worker token)."
+    MISSING_ENV=true
+fi
+if [ ! -f "$PROJECT_DIR/.env.docker" ]; then
+    echo "❌ Missing: vaultagent/.env.docker"
+    echo "   Copy the template:  cp vaultagent/.env.docker.example vaultagent/.env.docker"
+    echo "   Then set the same WORKER_TOKEN as in .env.secure."
+    MISSING_ENV=true
+fi
+if [ "$MISSING_ENV" = true ]; then
+    echo ""
+    echo "⚠  Deploy aborted. Create the missing env file(s) and re-run."
+    exit 1
+fi
+
+# ── Docker sandbox setup ─────────────────────────────────
+echo "🐳 Building sandbox worker image …"
+ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose build --quiet"
+echo "🐳 Starting sandbox worker …"
+ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose up -d"
+# Wait for the worker to become healthy
+echo "⏳ Waiting for worker health check …"
+for i in $(seq 1 15); do
+    if ssh "$REMOTE_HOST" "curl -sf http://localhost:9100/health >/dev/null 2>&1"; then
+        echo "   ✓ Worker is healthy"
+        break
+    fi
+    if [ "$i" = "15" ]; then
+        echo "   ⚠ Worker did not respond in time — the host will retry on startup"
+    fi
+    sleep 2
+done
+
 # ── Systemd Service einrichten ────────────────────────────
 echo "⚙️  Richte systemd-Service ein …"
 
 ssh "$REMOTE_HOST" "chmod +x $REMOTE_DIR/$SERVICE_NAME"
 
+# Determine which env file systemd should load
+ENV_FILE="$REMOTE_DIR/.env"
+if [ -f "$PROJECT_DIR/.env.secure" ]; then
+    ENV_FILE="$REMOTE_DIR/.env.secure"
+fi
+
 # Service-Unit auf den Pi schreiben
 ssh "$REMOTE_HOST" "sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null" <<EOF
 [Unit]
 Description=VaultAgent – Personal AI Assistant
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
@@ -95,7 +157,7 @@ Type=simple
 User=$REMOTE_USER
 WorkingDirectory=$REMOTE_DIR
 ExecStart=$REMOTE_DIR/$SERVICE_NAME
-EnvironmentFile=$REMOTE_DIR/.env
+EnvironmentFile=$ENV_FILE
 Restart=always
 RestartSec=5
 

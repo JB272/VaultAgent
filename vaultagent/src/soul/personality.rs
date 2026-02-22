@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
-/// Lädt die Persönlichkeit (System-Prompt) aus einer Markdown-Datei.
+/// Loads the personality (system prompt) from a Markdown file.
 pub struct Personality {
     content: String,
     path: PathBuf,
 }
 
 impl Personality {
-    /// Lädt personality.md aus dem Soul-Verzeichnis.
-    /// Gibt einen Fallback-Prompt zurück, wenn die Datei nicht existiert.
+    /// Loads personality.md from the Soul directory.
+    /// Returns a fallback prompt if the file does not exist.
     pub fn load(soul_dir: &Path) -> Self {
         let path = soul_dir.join("personality.md");
         let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
@@ -24,12 +24,12 @@ impl Personality {
         Self { content, path }
     }
 
-    /// Gibt den System-Prompt-Text zurück.
+    /// Returns the system prompt text.
     pub fn system_prompt(&self) -> &str {
         &self.content
     }
 
-    /// Pfad zur Personality-Datei.
+    /// Path to the personality file.
     pub fn path(&self) -> &Path {
         &self.path
     }

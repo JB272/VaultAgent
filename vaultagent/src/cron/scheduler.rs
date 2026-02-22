@@ -3,15 +3,15 @@ use std::sync::Arc;
 use crate::cron::store::CronStore;
 use crate::gateway::incoming_actions_queue::{ChronAction, IncomingAction, IncomingActionWriter};
 
-/// Scheduler-Task: prüft periodisch den CronStore auf fällige Jobs
-/// und pushed `IncomingAction::Cron` in die Event-Queue.
+/// Scheduler task: periodically checks the CronStore for due jobs
+/// and pushes `IncomingAction::Cron` into the event queue.
 pub struct CronScheduler;
 
 impl CronScheduler {
-    /// Startet den Scheduler als Background-Task.
-    /// Prüft alle 5 Sekunden auf fällige Jobs.
+    /// Starts the scheduler as a background task.
+    /// Checks for due jobs every 5 seconds.
     pub fn start(store: Arc<CronStore>, writer: IncomingActionWriter) {
-        // Beim Start anstehende Jobs loggen
+        // Log pending jobs at startup
         let store_clone = Arc::clone(&store);
         tokio::spawn(async move {
             let jobs = store_clone.list().await;

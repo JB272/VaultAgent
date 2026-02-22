@@ -1,7 +1,7 @@
 use reqwest::Client;
 use std::error::Error;
 
-/// Transkribiert Audio-Daten über die OpenAI-kompatible Whisper API.
+/// Transcribes audio data via the OpenAI-compatible Whisper API.
 #[derive(Debug)]
 pub struct TranscriptionService {
     client: Client,
@@ -10,8 +10,8 @@ pub struct TranscriptionService {
 }
 
 impl TranscriptionService {
-    /// Erstellt einen neuen Service aus Umgebungsvariablen.
-    /// Nutzt denselben API-Key und Base-URL wie das LLM.
+    /// Creates a new service from environment variables.
+    /// Uses the same API key and base URL as the LLM.
     pub fn from_env() -> Option<Self> {
         let api_key = std::env::var("LLM_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
@@ -31,7 +31,7 @@ impl TranscriptionService {
         })
     }
 
-    /// Transkribiert Audio-Bytes (OGG/MP3/WAV/etc.) zu Text.
+    /// Transcribes audio bytes (OGG/MP3/WAV/etc.) to text.
     pub async fn transcribe(
         &self,
         audio_data: Vec<u8>,
@@ -43,7 +43,7 @@ impl TranscriptionService {
             Some(m) if m.contains("wav") => "wav",
             Some(m) if m.contains("mp4") || m.contains("m4a") => "m4a",
             Some(m) if m.contains("webm") => "webm",
-            _ => "ogg", // Telegram Voice Messages sind standardmäßig OGG/Opus
+            _ => "ogg", // Telegram voice messages default to OGG/Opus
         };
 
         let filename = format!("audio.{}", extension);
@@ -54,7 +54,7 @@ impl TranscriptionService {
 
         let form = reqwest::multipart::Form::new()
             .text("model", "whisper-1")
-            .text("language", "de") // Default Deutsch, könnte konfigurierbar sein
+            .text("language", "de") // Default German, could be made configurable
             .part("file", part);
 
         let url = format!(

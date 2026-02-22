@@ -6,7 +6,7 @@ use crate::cron::store::CronStore;
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 
-/// Skill: Entfernt einen geplanten Cron-Job anhand seiner ID.
+/// Skill: Removes a scheduled cron job by its ID.
 pub struct CronRemoveSkill {
     store: Arc<CronStore>,
 }
@@ -42,7 +42,10 @@ impl Skill for CronRemoveSkill {
     }
 
     async fn execute(&self, arguments: &Value) -> String {
-        let job_id = arguments.get("job_id").and_then(Value::as_str).unwrap_or("");
+        let job_id = arguments
+            .get("job_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
 
         if job_id.is_empty() {
             return json!({ "ok": false, "error": "job_id is missing." }).to_string();
@@ -52,15 +55,18 @@ impl Skill for CronRemoveSkill {
             Ok(true) => json!({
                 "ok": true,
                 "message": format!("Job '{}' deleted.", job_id),
-            }).to_string(),
+            })
+            .to_string(),
             Ok(false) => json!({
                 "ok": false,
                 "error": format!("No job found with ID '{}'.", job_id),
-            }).to_string(),
+            })
+            .to_string(),
             Err(err) => json!({
                 "ok": false,
                 "error": format!("Failed to delete job: {}", err),
-            }).to_string(),
+            })
+            .to_string(),
         }
     }
 }

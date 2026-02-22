@@ -37,7 +37,7 @@ impl OpenAiCompatibleClient {
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .map_err(|_| {
                 LlmError::Config(
-                    "Setze LLM_API_KEY (oder OPENAI_API_KEY) als Umgebungsvariable.".to_string(),
+                    "Set LLM_API_KEY (or OPENAI_API_KEY) as an environment variable.".to_string(),
                 )
             })?;
 

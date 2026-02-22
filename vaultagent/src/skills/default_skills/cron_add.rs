@@ -8,7 +8,7 @@ use crate::cron::store::{CronJob, CronStore, Schedule};
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 
-/// Skill: Erstellt einen neuen Cron-Job (Erinnerung / geplante Nachricht).
+/// Skill: Creates a new cron job (reminder / scheduled message).
 pub struct CronAddSkill {
     store: Arc<CronStore>,
 }
@@ -100,7 +100,7 @@ impl Skill for CronAddSkill {
                 let at_str = arguments.get("at").and_then(Value::as_str).unwrap_or("");
                 match at_str.parse::<DateTime<Utc>>() {
                     Ok(at) => {
-                        // Keine Jobs in der Vergangenheit akzeptieren
+                        // Do not accept jobs in the past
                         if at < Utc::now() {
                             return json!({
                                 "ok": false,
@@ -127,7 +127,7 @@ impl Skill for CronAddSkill {
                 if expr.is_empty() {
                     return json!({ "ok": false, "error": "cron_expr is missing." }).to_string();
                 }
-                // Validieren
+                // Validate
                 if croner::Cron::new(expr).parse().is_err() {
                     return json!({
                         "ok": false,

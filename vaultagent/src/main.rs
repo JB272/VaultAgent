@@ -3,6 +3,7 @@ mod gateway;
 mod reasoning;
 mod skills;
 mod soul;
+mod worker;
 
 use cron::{CronScheduler, CronStore};
 use gateway::com::GatewayRegistry;
@@ -13,18 +14,7 @@ use reasoning::agent::Agent;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
-use skills::default_skills::cron_add::CronAddSkill;
-use skills::default_skills::cron_list::CronListSkill;
-use skills::default_skills::cron_remove::CronRemoveSkill;
-use skills::default_skills::list_directory::ListDirectorySkill;
-use skills::default_skills::memory_save::MemorySaveSkill;
-use skills::default_skills::memory_search::MemorySearchSkill;
-use skills::default_skills::read_file::ReadFileSkill;
 use skills::default_skills::research::ResearchSkill;
-use skills::default_skills::web_fetch::WebFetchSkill;
-use skills::default_skills::web_search::WebSearchSkill;
-use skills::default_skills::write_file::WriteFileSkill;
-use skills::python_skill::load_python_skills;
 use soul::Soul;
 use std::error::Error;
 use std::path::Path;
@@ -32,11 +22,26 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    if dotenvy::dotenv().is_err() {
-        let _ = dotenvy::from_filename("vaultagent/.env");
+    // ── Worker mode ─────────────────────────────────────
+    // When started with `--worker`, run as a sandbox HTTP skill server
+    // inside Docker and exit.  No Telegram, no LLM, no secrets.
+    if std::env::args().any(|a| a == "--worker") {
+        // Load worker-specific env
+        if dotenvy::from_filename(".env.docker").is_err() {
+            let _ = dotenvy::dotenv(); // fallback
+        }
+        return worker::start_worker().await;
     }
 
-    // ── Soul (Persönlichkeit + Gedächtnis) ────────────
+    // ── Host / Orchestrator mode ────────────────────────
+    // Load host-only env (secrets)
+    if dotenvy::from_filename(".env.secure").is_err() {
+        if dotenvy::dotenv().is_err() {
+            let _ = dotenvy::from_filename("vaultagent/.env");
+        }
+    }
+
+    // ── Soul (only needed for system prompt on the host) ──
     let soul_dir = std::env::var("SOUL_DIR").unwrap_or_else(|_| "soul".to_string());
     let soul = Arc::new(Soul::load(Path::new(&soul_dir)));
 
@@ -56,31 +61,24 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     };
 
-    // ── Skills ──────────────────────────────────────────
-    let mut skills = SkillRegistry::new();
+    // ── Skills (always via Docker sandbox worker) ───────
+    let worker_url = std::env::var("WORKER_URL")
+        .expect("WORKER_URL must be set (e.g. http://localhost:9100). All skills run in the Docker sandbox.");
+    let worker_token = std::env::var("WORKER_TOKEN").unwrap_or_default();
+    println!("[Main][Sandbox] Connecting to worker at {} …", worker_url);
 
-    // Default Skills (Rust)
-    skills.add(ReadFileSkill);
-    skills.add(WriteFileSkill);
-    skills.add(ListDirectorySkill);
-    skills.add(WebSearchSkill::new());
-    skills.add(WebFetchSkill::new());
+    let remote = skills::RemoteSkillProxy::connect(&worker_url, &worker_token).await?;
+    println!(
+        "[Main][Sandbox] Connected — {} remote skills available",
+        remote.skill_names().len()
+    );
+
+    let mut skills = SkillRegistry::new_with_remote(remote.clone());
+
+    // `research` stays host-side because it orchestrates via the LLM.
+    // Its sub-skills (web_search, web_fetch) are routed through the worker.
     if let Some(ref llm_arc) = llm {
-        skills.add(ResearchSkill::new(std::sync::Arc::clone(llm_arc)));
-    }
-    skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
-    skills.add(MemorySearchSkill::new(Arc::clone(&soul.memory)));
-
-    // Cron Skills
-    skills.add(CronAddSkill::new(Arc::clone(&cron_store)));
-    skills.add(CronListSkill::new(Arc::clone(&cron_store)));
-    skills.add(CronRemoveSkill::new(Arc::clone(&cron_store)));
-
-    // Softcoded Skills (Python-Skripte aus skills/ Verzeichnis)
-    let python_skills_dir =
-        std::env::var("PYTHON_SKILLS_DIR").unwrap_or_else(|_| "skills".to_string());
-    for skill in load_python_skills(Path::new(&python_skills_dir)).await {
-        skills.add(skill);
+        skills.add(ResearchSkill::new(Arc::clone(llm_arc)).with_remote(remote));
     }
 
     // ── Agent ───────────────────────────────────────────

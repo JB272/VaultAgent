@@ -3,40 +3,40 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
 
-/// Ein geplanter Job – persistiert in `cron/jobs.json`.
+/// A scheduled job — persisted in `cron/jobs.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
-    /// Eindeutige Job-ID (UUID).
+    /// Unique job ID (UUID).
     pub id: String,
-    /// Menschenlesbarer Name (z.B. "Wetterbericht morgens").
+    /// Human-readable name (e.g. "Morning weather report").
     pub name: String,
-    /// Wann der Job laufen soll.
+    /// When the job should run.
     pub schedule: Schedule,
-    /// Der Prompt, der an das LLM geschickt wird, wenn der Job feuert.
+    /// The prompt sent to the LLM when the job fires.
     pub prompt: String,
-    /// Chat-ID, an die die Antwort gesendet wird.
+    /// Chat ID where the response will be sent.
     pub chat_id: i64,
-    /// Ob der Job aktiv ist.
+    /// Whether the job is active.
     pub enabled: bool,
-    /// Bei One-Shot-Jobs: nach dem Ausführen automatisch löschen?
+    /// For one-shot jobs: automatically delete after execution?
     pub delete_after_run: bool,
-    /// Zeitpunkt der letzten Ausführung (für Duplikat-Schutz).
+    /// Timestamp of the last execution (for duplicate protection).
     pub last_run: Option<DateTime<Utc>>,
-    /// Erstellt am.
+    /// Created at.
     pub created_at: DateTime<Utc>,
 }
 
-/// Schedule-Typen, inspiriert von OpenClaw.
+/// Schedule types, inspired by OpenClaw.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Schedule {
-    /// Einmaliger Zeitpunkt (ISO 8601).
+    /// One-time timestamp (ISO 8601).
     #[serde(rename = "at")]
     At { at: DateTime<Utc> },
-    /// Wiederkehrendes Intervall in Sekunden.
+    /// Recurring interval in seconds.
     #[serde(rename = "every")]
     Every { every_secs: u64 },
-    /// Cron-Ausdruck (5-Feld: "30 6 * * *") mit optionaler Zeitzone.
+    /// Cron expression (5-field: "30 6 * * *") with optional timezone.
     #[serde(rename = "cron")]
     Cron {
         expr: String,
@@ -45,15 +45,15 @@ pub enum Schedule {
     },
 }
 
-/// Persistenter Store für Cron-Jobs.  
-/// Liest/schreibt `jobs.json` im angegebenen Verzeichnis.
+/// Persistent store for cron jobs.
+/// Reads/writes `jobs.json` in the specified directory.
 pub struct CronStore {
     path: PathBuf,
     jobs: Mutex<Vec<CronJob>>,
 }
 
 impl CronStore {
-    /// Lädt bestehende Jobs aus `dir/jobs.json` oder startet leer.
+    /// Loads existing jobs from `dir/jobs.json` or starts empty.
     pub fn load(dir: &Path) -> Self {
         let path = dir.join("jobs.json");
         let jobs = if path.exists() {
@@ -84,14 +84,14 @@ impl CronStore {
         store
     }
 
-    /// Speichert alle Jobs auf die Festplatte.
+    /// Saves all jobs to disk.
     async fn persist(&self) -> Result<(), String> {
         let jobs = self.jobs.lock().await;
         let json = serde_json::to_string_pretty(&*jobs)
             .map_err(|e| format!("Serialization failed: {}", e))?;
         drop(jobs);
 
-        // Verzeichnis erstellen falls nötig
+        // Create directory if needed
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -101,7 +101,7 @@ impl CronStore {
         Ok(())
     }
 
-    /// Neuen Job hinzufügen und persistieren.
+    /// Add a new job and persist.
     pub async fn add(&self, job: CronJob) -> Result<String, String> {
         let id = job.id.clone();
         {
@@ -112,7 +112,7 @@ impl CronStore {
         Ok(id)
     }
 
-    /// Job anhand der ID entfernen.
+    /// Remove a job by its ID.
     pub async fn remove(&self, job_id: &str) -> Result<bool, String> {
         let removed = {
             let mut jobs = self.jobs.lock().await;
@@ -126,12 +126,12 @@ impl CronStore {
         Ok(removed)
     }
 
-    /// Alle Jobs auflisten.
+    /// List all jobs.
     pub async fn list(&self) -> Vec<CronJob> {
         self.jobs.lock().await.clone()
     }
 
-    /// Alle fälligen Jobs zurückgeben (und `last_run` aktualisieren).
+    /// Return all due jobs (and update `last_run`).
     pub async fn take_due_jobs(&self, now: DateTime<Utc>) -> Vec<CronJob> {
         let mut due = Vec::new();
         let mut to_delete = Vec::new();
@@ -146,7 +146,7 @@ impl CronStore {
                     due.push(job.clone());
                     job.last_run = Some(now);
 
-                    // One-Shot-Jobs deaktivieren
+                    // Deactivate one-shot jobs
                     if matches!(job.schedule, Schedule::At { .. }) {
                         if job.delete_after_run {
                             to_delete.push(job.id.clone());
@@ -156,7 +156,7 @@ impl CronStore {
                     }
                 }
             }
-            // Zu löschende Jobs entfernen
+            // Remove jobs marked for deletion
             jobs.retain(|j| !to_delete.contains(&j.id));
         }
 
@@ -167,16 +167,16 @@ impl CronStore {
         due
     }
 
-    /// Prüft, ob ein Job jetzt fällig ist.
+    /// Checks whether a job is due now.
     fn is_due(job: &CronJob, now: DateTime<Utc>) -> bool {
         match &job.schedule {
             Schedule::At { at } => {
-                // Fällig wenn Zeitpunkt erreicht und noch nicht gelaufen
+                // Due when timestamp is reached and has not run yet
                 now >= *at && job.last_run.is_none()
             }
             Schedule::Every { every_secs } => {
                 match job.last_run {
-                    None => true, // Noch nie gelaufen → sofort
+                    None => true, // Never run yet → run immediately
                     Some(last) => {
                         let elapsed = (now - last).num_seconds();
                         elapsed >= *every_secs as i64
@@ -184,12 +184,12 @@ impl CronStore {
                 }
             }
             Schedule::Cron { expr, tz: _ } => {
-                // Cron-Ausdruck parsen und prüfen
+                // Parse cron expression and check
                 let Ok(cron) = croner::Cron::new(expr).parse() else {
                     return false;
                 };
                 let last_check = job.last_run.unwrap_or(job.created_at);
-                // Nächsten Zeitpunkt nach dem letzten Check ermitteln
+                // Find next occurrence after the last check
                 match cron.find_next_occurrence(&last_check, false) {
                     Ok(next) => now >= next,
                     Err(_) => false,

@@ -66,17 +66,17 @@ impl TelegramBot {
         let mut bot = Self::new(token, webhook_url, port);
         bot.transcription = TranscriptionService::from_env().map(Arc::new);
 
-        // Erlaubte Chat-IDs laden: aus ENV + trusted_chat_ids.md
+        // Load allowed chat IDs: from ENV + trusted_chat_ids.md
         let mut allowed: HashSet<i64> = HashSet::new();
 
-        // 1) Aus Umgebungsvariable (kommasepariert)
+        // 1) From environment variable (comma-separated)
         if let Some(ids) = get_non_empty_env("TELEGRAM_ALLOWED_CHAT_IDS") {
             for id in ids.split(',').filter_map(|s| s.trim().parse::<i64>().ok()) {
                 allowed.insert(id);
             }
         }
 
-        // 2) Aus trusted_chat_ids.md (eine ID pro Zeile, # = Kommentar)
+        // 2) From trusted_chat_ids.md (one ID per line, # = comment)
         let trusted_path = std::path::Path::new("trusted_chat_ids.md");
         if trusted_path.exists() {
             if let Ok(content) = std::fs::read_to_string(trusted_path) {
@@ -126,7 +126,7 @@ impl TelegramBot {
         }
 
         if let Some(ref webhook_url) = self.webhook_url {
-            // Webhook-Modus: öffentliche URL setzen und HTTP-Server starten
+            // Webhook mode: set public URL and start HTTP server
             self.set_webhook(webhook_url.clone()).await?;
 
             let app_state = AppState {
@@ -157,7 +157,7 @@ impl TelegramBot {
                 }
             });
         } else {
-            // Polling-Modus: Webhook löschen und long-polling starten
+            // Polling mode: delete webhook and start long-polling
             self.delete_webhook().await?;
             println!("[Telegram] Polling mode enabled");
 
@@ -171,7 +171,7 @@ impl TelegramBot {
                                 offset = Some(update.update_id + 1);
 
                                 if let Some(ref message) = update.message {
-                                    // Chat-ID-Allowlist prüfen
+                                    // Check chat ID allowlist
                                     if let Some(ref allowed) = bot.allowed_chat_ids {
                                         if !allowed.contains(&message.chat.id) {
                                             let _ = bot.send_message(
@@ -376,7 +376,7 @@ impl TelegramBot {
         }
     }
 
-    /// Ruft die Dateiinfo ab (file_path) für einen gegebenen file_id.
+    /// Retrieves file info (file_path) for a given file_id.
     pub async fn get_file_path(
         &self,
         file_id: &str,
@@ -401,7 +401,7 @@ impl TelegramBot {
             .ok_or_else(|| "No file_path in Telegram response".into())
     }
 
-    /// Lädt eine Datei von den Telegram-Servern herunter.
+    /// Downloads a file from Telegram's servers.
     pub async fn download_file(
         &self,
         file_path: &str,
@@ -563,7 +563,7 @@ impl Gateway for TelegramBot {
         text: &str,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         if !self.known_chat_ids.lock().await.contains(&chat_id) {
-            return Ok(()); // Nicht unser Chat
+            return Ok(()); // Not our chat
         }
         self.send_message(chat_id, text).await?;
         Ok(())
@@ -581,14 +581,14 @@ impl Gateway for TelegramBot {
     }
 }
 
-/// Extrahiert Text aus einer Nachricht – entweder direkt oder durch Transkription von Voice/Audio.
+/// Extracts text from a message — either directly or by transcribing Voice/Audio.
 async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Option<String> {
-    // 1) Normale Textnachricht
+    // 1) Regular text message
     if let Some(ref text) = message.text {
         return Some(text.clone());
     }
 
-    // 2) Voice-Memo oder Audio-Datei → transkribieren
+    // 2) Voice memo or audio file → transcribe
     let audio_info = message.voice.as_ref().or(message.audio.as_ref())?;
     let transcription_service = bot.transcription.as_ref()?;
 
@@ -645,7 +645,7 @@ async fn health() -> StatusCode {
 
 async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Update>) -> StatusCode {
     if let Some(ref message) = update.message {
-        // Chat-ID-Allowlist prüfen
+        // Check chat ID allowlist
         if let Some(ref allowed) = state.bot.allowed_chat_ids {
             if !allowed.contains(&message.chat.id) {
                 let _ = state.bot.send_message(
@@ -656,7 +656,7 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
             }
         }
 
-        // Chat-ID als "bekannt" registrieren, damit Gateway nur an echte Telegram-Chats sendet
+        // Register chat ID as "known" so Gateway only sends to real Telegram chats
         state.known_chat_ids.lock().await.insert(message.chat.id);
 
         // Handle slash commands

@@ -6,7 +6,7 @@ use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 use crate::soul::memory::Memory;
 
-/// Skill: Speichert einen Eintrag ins Tageslog oder Langzeitgedächtnis.
+/// Skill: Saves an entry to the daily log or long-term memory.
 pub struct MemorySaveSkill {
     memory: Arc<Memory>,
 }

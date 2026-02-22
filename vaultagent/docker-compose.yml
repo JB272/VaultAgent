@@ -1,0 +1,48 @@
+# VaultAgent — Sandbox Worker
+#
+# The host orchestrator (systemd) talks to this container over HTTP.
+# All skill/tool execution happens inside the container.
+# LLM keys and Telegram tokens NEVER enter this container.
+#
+# Usage:
+#   docker compose up -d          # start worker
+#   docker compose logs -f        # view logs
+#   docker compose down           # stop worker
+#   docker compose build          # rebuild image after binary update
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: vaultagent-worker
+    restart: unless-stopped
+
+    # ── Volumes ───────────────────────────────────────
+    # Mount workspace directories into the container.
+    # The worker can read and write these freely.
+    volumes:
+      - ./soul:/workspace/soul
+      - ./skills:/workspace/skills
+      - ./cron:/workspace/cron
+
+    # ── Environment ───────────────────────────────────
+    env_file: .env.docker
+
+    # ── Network ───────────────────────────────────────
+    # Only expose on localhost — the host orchestrator connects here.
+    ports:
+      - "127.0.0.1:9100:9100"
+
+    # ── Security hardening ────────────────────────────
+    read_only: true            # root filesystem is read-only
+    tmpfs:
+      - /tmp:size=100M         # writable /tmp for Python etc.
+    security_opt:
+      - no-new-privileges:true # prevent privilege escalation
+    cap_drop:
+      - ALL                    # drop all Linux capabilities
+
+    # ── Resource limits ───────────────────────────────
+    mem_limit: 512m
+    pids_limit: 100

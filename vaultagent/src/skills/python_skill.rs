@@ -7,28 +7,28 @@ use tokio::process::Command;
 use super::Skill;
 use crate::reasoning::llm_interface::LlmToolDefinition;
 
-/// Ein Skill, der durch ein externes Python-Skript implementiert wird.
+/// A skill implemented by an external Python script.
 ///
-/// Konvention für das Skript:
-///   `python script.py --describe`   → JSON auf stdout: { "name", "description", "parameters" }
-///   `python script.py --execute '{...}'` → JSON-Ergebnis auf stdout
+/// Convention for the script:
+///   `python script.py --describe`   → JSON on stdout: { "name", "description", "parameters" }
+///   `python script.py --execute '{...}'` → JSON result on stdout
 ///
-/// Das Skript wird bei `load_python_skills()` einmal per `--describe` abgefragt
-/// und danach bei jedem Tool-Call per `--execute` aufgerufen.
+/// The script is queried once via `--describe` during `load_python_skills()`
+/// and then invoked via `--execute` for each tool call.
 pub struct PythonSkill {
     script_path: PathBuf,
     definition: LlmToolDefinition,
 }
 
 #[derive(Debug, Deserialize)]
-struct SkriptDescription {
+struct ScriptDescription {
     name: String,
     description: Option<String>,
     parameters: Option<Value>,
 }
 
 impl PythonSkill {
-    /// Lädt ein einzelnes Python-Skript und fragt seine Beschreibung per `--describe` ab.
+    /// Loads a single Python script and queries its description via `--describe`.
     pub async fn load(script_path: impl Into<PathBuf>) -> Result<Self, String> {
         let script_path = script_path.into();
 
@@ -73,7 +73,7 @@ impl PythonSkill {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let desc: SkriptDescription = serde_json::from_str(stdout.trim()).map_err(|e| {
+        let desc: ScriptDescription = serde_json::from_str(stdout.trim()).map_err(|e| {
             format!(
                 "Invalid --describe response from {}: {} (raw: {})",
                 script_path.display(),
@@ -145,8 +145,8 @@ impl Skill for PythonSkill {
                 if output.status.success() {
                     let trimmed = stdout.trim();
 
-                    // Validieren, dass es gültiges JSON ist – falls nicht,
-                    // wrappen wir es als { "ok": true, "output": "..." }
+                    // Validate that it's valid JSON — if not,
+                    // wrap it as { "ok": true, "output": "..." }
                     if serde_json::from_str::<Value>(trimmed).is_ok() {
                         trimmed.to_string()
                     } else {
@@ -175,8 +175,8 @@ impl Skill for PythonSkill {
     }
 }
 
-/// Scannt ein Verzeichnis nach `*.py` Dateien, lädt jede per `--describe`
-/// und gibt alle erfolgreich geladenen PythonSkills zurück.
+/// Scans a directory for `*.py` files, loads each via `--describe`,
+/// and returns all successfully loaded PythonSkills.
 pub async fn load_python_skills(dir: &Path) -> Vec<PythonSkill> {
     let mut skills = Vec::new();
 

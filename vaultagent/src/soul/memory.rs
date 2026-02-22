@@ -1,9 +1,9 @@
 use chrono::Local;
 use std::path::{Path, PathBuf};
 
-/// Verwaltet das Gedächtnis des Agenten:
-/// - `MEMORY.md` — kuratiertes Langzeitgedächtnis
-/// - `memory/YYYY-MM-DD.md` — tägliche append-only Logs
+/// Manages the agent's memory:
+/// - `MEMORY.md` — curated long-term memory
+/// - `memory/YYYY-MM-DD.md` — daily append-only logs
 pub struct Memory {
     soul_dir: PathBuf,
 }
@@ -21,21 +21,21 @@ impl Memory {
         }
     }
 
-    // ── Lesen ───────────────────────────────────────────
+    // ── Reading ─────────────────────────────────────────────────
 
-    /// Lädt das kuratierte Langzeitgedächtnis (MEMORY.md).
+    /// Loads the curated long-term memory (MEMORY.md).
     pub fn load_long_term(&self) -> String {
         let path = self.soul_dir.join("MEMORY.md");
         std::fs::read_to_string(&path).unwrap_or_default()
     }
 
-    /// Lädt das Tageslog für heute.
+    /// Loads today's daily log.
     pub fn load_today(&self) -> String {
         let path = self.daily_path_for_today();
         std::fs::read_to_string(&path).unwrap_or_default()
     }
 
-    /// Lädt das Tageslog für gestern.
+    /// Loads yesterday's daily log.
     pub fn load_yesterday(&self) -> String {
         let yesterday = Local::now().date_naive() - chrono::Duration::days(1);
         let filename = format!("{}.md", yesterday.format("%Y-%m-%d"));
@@ -43,8 +43,8 @@ impl Memory {
         std::fs::read_to_string(&path).unwrap_or_default()
     }
 
-    /// Baut den Memory-Kontext zusammen, der in den System-Prompt injiziert wird.
-    /// Enthält: MEMORY.md + gestern + heute (wenn vorhanden).
+    /// Builds the memory context that gets injected into the system prompt.
+    /// Contains: MEMORY.md + yesterday + today (if available).
     pub fn context_block(&self) -> String {
         let mut parts = Vec::new();
 
@@ -86,13 +86,13 @@ impl Memory {
         }
     }
 
-    // ── Schreiben ───────────────────────────────────────
+    // ── Writing ────────────────────────────────────────────────
 
-    /// Hängt einen Eintrag ans heutige Tageslog an (append-only).
+    /// Appends an entry to today's daily log (append-only).
     pub async fn append_today(&self, entry: &str) -> Result<(), String> {
         let path = self.daily_path_for_today();
 
-        // Header wenn Datei noch nicht existiert
+        // Header if file does not exist yet
         let needs_header = !path.exists();
         let mut content = String::new();
 
@@ -117,7 +117,7 @@ impl Memory {
         Ok(())
     }
 
-    /// Hängt einen Eintrag an MEMORY.md an (Langzeitgedächtnis).
+    /// Appends an entry to MEMORY.md (long-term memory).
     pub async fn append_long_term(&self, entry: &str) -> Result<(), String> {
         let path = self.soul_dir.join("MEMORY.md");
 
@@ -136,21 +136,21 @@ impl Memory {
         Ok(())
     }
 
-    // ── Suche ───────────────────────────────────────────
+    // ── Search ─────────────────────────────────────────────────
 
-    /// Durchsucht alle Memory-Dateien nach einem Suchbegriff (case-insensitive).
-    /// Gibt alle Treffer mit Dateiname + Zeile zurück.
+    /// Searches all memory files for a query term (case-insensitive).
+    /// Returns all matches with filename + line number.
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
         let mut results = Vec::new();
         let query_lower = query.to_lowercase();
 
-        // MEMORY.md durchsuchen
+        // Search MEMORY.md
         let long_term_path = self.soul_dir.join("MEMORY.md");
         if let Ok(content) = std::fs::read_to_string(&long_term_path) {
             Self::search_in_content(&content, "MEMORY.md", &query_lower, &mut results);
         }
 
-        // Alle Tageslogs durchsuchen
+        // Search all daily logs
         let memory_dir = self.soul_dir.join("memory");
         if let Ok(entries) = std::fs::read_dir(&memory_dir) {
             let mut files: Vec<_> = entries
@@ -197,7 +197,7 @@ impl Memory {
         }
     }
 
-    // ── Hilfsfunktionen ─────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────
 
     fn daily_path_for_today(&self) -> PathBuf {
         let date = Local::now().date_naive();

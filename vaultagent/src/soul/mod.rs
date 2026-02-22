@@ -7,8 +7,8 @@ use std::sync::Arc;
 use memory::Memory;
 use personality::Personality;
 
-/// Die "Seele" des Agenten — Persönlichkeit + Gedächtnis.
-/// Wird beim Start aus dem `soul/` Verzeichnis geladen.
+/// The "soul" of the agent — personality + memory.
+/// Loaded at startup from the `soul/` directory.
 pub struct Soul {
     pub personality: Personality,
     pub memory: Arc<Memory>,
@@ -16,7 +16,7 @@ pub struct Soul {
 }
 
 impl Soul {
-    /// Lädt die Soul aus einem Verzeichnis (default: `soul/`).
+    /// Loads the Soul from a directory (default: `soul/`).
     pub fn load(soul_dir: &Path) -> Self {
         println!("[Soul] Loading from: {}", soul_dir.display());
 
@@ -30,8 +30,8 @@ impl Soul {
         }
     }
 
-    /// Baut den vollständigen System-Prompt:
-    /// Persönlichkeit + aktueller Memory-Kontext (MEMORY.md + gestern + heute).
+    /// Builds the complete system prompt:
+    /// Personality + current memory context (MEMORY.md + yesterday + today).
     pub fn system_prompt(&self) -> String {
         let base = self.personality.system_prompt();
         let memory_block = self.memory.context_block();

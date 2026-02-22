@@ -58,7 +58,7 @@ impl Skill for ListDirectorySkill {
         while let Ok(Some(entry)) = read_dir.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
 
-            // Versteckte Dateien und target/ überspringen
+            // Skip hidden files and target/
             if name.starts_with('.') || name == "target" {
                 continue;
             }
@@ -80,13 +80,13 @@ impl Skill for ListDirectorySkill {
             }));
         }
 
-        // Alphabetisch sortieren, Ordner zuerst
+        // Sort alphabetically, directories first
         entries.sort_by(|a, b| {
             let a_type = a.get("type").and_then(Value::as_str).unwrap_or("");
             let b_type = b.get("type").and_then(Value::as_str).unwrap_or("");
             let a_name = a.get("name").and_then(Value::as_str).unwrap_or("");
             let b_name = b.get("name").and_then(Value::as_str).unwrap_or("");
-            // Ordner vor Dateien, dann alphabetisch
+            // Directories before files, then alphabetical
             b_type.cmp(a_type).then(a_name.cmp(b_name))
         });
 

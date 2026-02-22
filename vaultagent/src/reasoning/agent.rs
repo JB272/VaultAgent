@@ -62,17 +62,17 @@ impl Agent {
         self.skills.skill_names()
     }
 
-    /// Verarbeitet eine Chat-Nachricht und gibt die Antwort des Agenten zurück.
-    /// Führt bei Bedarf bis zu `max_rounds` Tool-Aufrufe-Zyklen durch.
-    /// Die Conversation-History bleibt über Aufrufe hinweg erhalten.
-    /// `chat_id` wird als Kontext mitgegeben, damit Skills wie cron_add wissen,
-    /// an welchen Chat die Antwort gehen soll.
+    /// Processes a chat message and returns the agent's response.
+    /// Executes up to `max_rounds` tool-call cycles as needed.
+    /// The conversation history is preserved across calls.
+    /// `chat_id` is passed as context so skills like cron_add know
+    /// which chat to send the response to.
     pub async fn process(&self, user_text: &str, chat_id: i64) -> String {
         let Some(llm) = &self.llm else {
             return "LLM is not configured. Set LLM_API_KEY to receive responses.".to_string();
         };
 
-        // User-Nachricht an die persistente History anhängen
+        // Append user message to persistent history
         {
             let mut history = self.history.lock().await;
             history.push(LlmMessage {
@@ -83,7 +83,7 @@ impl Agent {
                 tool_calls: Vec::new(),
             });
 
-            // Sliding Window: älteste Nachrichten kürzen
+            // Sliding window: trim oldest messages
             if history.len() > self.max_history {
                 let excess = history.len() - self.max_history;
                 history.drain(0..excess);
@@ -116,7 +116,7 @@ impl Agent {
             tool_calls: Vec::new(),
         }];
 
-        // Gesamte History anhängen
+        // Append full history
         {
             let history = self.history.lock().await;
             messages.extend(history.clone());
@@ -138,14 +138,14 @@ impl Agent {
                 }
             }
 
-            // Keine Tool-Calls → fertige Antwort
+            // No tool calls → final response
             if response.tool_calls.is_empty() {
                 let content = response.content.trim();
                 if content.is_empty() {
                     let fallback = response
                         .refusal
                         .unwrap_or_else(|| "No response received from the LLM.".to_string());
-                    // Antwort in History speichern
+                    // Save response to history
                     self.history.lock().await.push(LlmMessage {
                         role: LlmRole::Assistant,
                         content: LlmMessageContent::Text(fallback.clone()),
@@ -155,7 +155,7 @@ impl Agent {
                     });
                     return fallback;
                 }
-                // Antwort in History speichern
+                // Save response to history
                 self.history.lock().await.push(LlmMessage {
                     role: LlmRole::Assistant,
                     content: LlmMessageContent::Text(content.to_string()),
@@ -166,7 +166,7 @@ impl Agent {
                 return content.to_string();
             }
 
-            // Tool-Calls ausführen
+            // Execute tool calls
             let tool_calls = response.tool_calls.clone();
             messages.push(LlmMessage {
                 role: LlmRole::Assistant,

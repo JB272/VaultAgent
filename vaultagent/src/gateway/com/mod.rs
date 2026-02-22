@@ -6,20 +6,20 @@ pub mod website;
 
 use async_trait::async_trait;
 
-/// Jeder Kommunikationskanal (Website, Telegram, …) implementiert diesen Trait.
-/// Man kann beliebig viele Gateways registrieren – der Agent broadcastet an alle.
+/// Every communication channel (Website, Telegram, …) implements this trait.
+/// Any number of gateways can be registered — the agent broadcasts to all.
 #[async_trait]
 pub trait Gateway: Send + Sync {
     fn name(&self) -> &str;
 
-    /// Antwort an einen bestimmten Chat senden.
+    /// Send a reply to a specific chat.
     async fn send_reply(
         &self,
         chat_id: i64,
         text: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-    /// Typing-Indikator setzen/aufheben.
+    /// Set/clear the typing indicator.
     async fn notify_typing(
         &self,
         chat_id: i64,
@@ -27,8 +27,8 @@ pub trait Gateway: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
-/// Registry aller aktiven Gateways.
-/// Broadcastet Nachrichten und Typing-Status an alle registrierten Kanäle.
+/// Registry of all active gateways.
+/// Broadcasts messages and typing status to all registered channels.
 pub struct GatewayRegistry {
     gateways: Vec<Box<dyn Gateway>>,
 }
