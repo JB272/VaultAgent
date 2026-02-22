@@ -198,11 +198,16 @@ impl TelegramBot {
                                         {
                                             match result {
                                                 CommandResult::Text(reply) => {
-                                                    let _ = bot.send_html(message.chat.id, reply).await;
+                                                    let _ =
+                                                        bot.send_html(message.chat.id, reply).await;
                                                 }
                                                 CommandResult::Keyboard { text, markup } => {
                                                     let _ = bot
-                                                        .send_keyboard_message(message.chat.id, text, markup)
+                                                        .send_keyboard_message(
+                                                            message.chat.id,
+                                                            text,
+                                                            markup,
+                                                        )
                                                         .await;
                                                 }
                                             }
@@ -593,7 +598,9 @@ fn build_model_keyboard(models: &[String], current: &str) -> InlineKeyboardMarku
             }]
         })
         .collect();
-    InlineKeyboardMarkup { inline_keyboard: rows }
+    InlineKeyboardMarkup {
+        inline_keyboard: rows,
+    }
 }
 
 async fn handle_callback_query(query: &CallbackQuery, bot: &TelegramBot) {
@@ -619,7 +626,9 @@ async fn handle_callback_query(query: &CallbackQuery, bot: &TelegramBot) {
                 .edit_message_text(
                     msg.chat.id,
                     msg.message_id,
-                    format!("🤖 <b>Select model</b> (✅ = active):\nCurrent: <code>{model_name}</code>"),
+                    format!(
+                        "🤖 <b>Select model</b> (✅ = active):\nCurrent: <code>{model_name}</code>"
+                    ),
                     Some(markup),
                 )
                 .await;
@@ -665,7 +674,9 @@ async fn handle_command(text: &str, bot: &TelegramBot, _chat_id: i64) -> Option<
                 .map(|n| format!("• <code>{n}</code>"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            return Some(CommandResult::Text(format!("🛠 <b>Available tools:</b>\n\n{list}")));
+            return Some(CommandResult::Text(format!(
+                "🛠 <b>Available tools:</b>\n\n{list}"
+            )));
         }
         return Some(CommandResult::Text("No agent configured.".to_string()));
     }
