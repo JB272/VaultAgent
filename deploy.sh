@@ -59,34 +59,56 @@ ssh "$REMOTE_HOST" "mkdir -p $REMOTE_DIR/soul/memory $REMOTE_DIR/skills $REMOTE_
 # Binary
 scp "$BINARY" "$REMOTE_HOST:$REMOTE_DIR/$SERVICE_NAME"
 
-# Environment files — use split env if available, fallback to single .env
+# Environment files — only copy if they don't exist on the server yet
 if [ -f "$PROJECT_DIR/.env.secure" ]; then
-    scp "$PROJECT_DIR/.env.secure" "$REMOTE_HOST:$REMOTE_DIR/.env.secure"
-    echo "   ✓ .env.secure (host secrets)"
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.secure" || {
+        scp "$PROJECT_DIR/.env.secure" "$REMOTE_HOST:$REMOTE_DIR/.env.secure"
+        echo "   ✓ .env.secure (host secrets)"
+    }
 fi
 if [ -f "$PROJECT_DIR/.env.docker" ]; then
-    scp "$PROJECT_DIR/.env.docker" "$REMOTE_HOST:$REMOTE_DIR/.env.docker"
-    echo "   ✓ .env.docker (worker env)"
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.docker" || {
+        scp "$PROJECT_DIR/.env.docker" "$REMOTE_HOST:$REMOTE_DIR/.env.docker"
+        echo "   ✓ .env.docker (worker env)"
+    }
 fi
 if [ -f "$PROJECT_DIR/.env" ]; then
-    scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
-    echo "   ✓ .env (fallback)"
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env" || {
+        scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
+        echo "   ✓ .env (fallback)"
+    }
 fi
 
-# Trusted Chat-IDs
+# Trusted Chat-IDs — only if not present on server
 if [ -f "$PROJECT_DIR/trusted_chat_ids.md" ]; then
-    scp "$PROJECT_DIR/trusted_chat_ids.md" "$REMOTE_HOST:$REMOTE_DIR/trusted_chat_ids.md"
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/trusted_chat_ids.md" || \
+        scp "$PROJECT_DIR/trusted_chat_ids.md" "$REMOTE_HOST:$REMOTE_DIR/trusted_chat_ids.md"
 fi
 
-# Soul (Persönlichkeit + Gedächtnis)
-scp -r "$PROJECT_DIR/soul/" "$REMOTE_HOST:$REMOTE_DIR/soul/"
+# Soul — only copy files that don't exist on the server yet (never overwrite
+# personality.md, MEMORY.md, or daily logs written at runtime).
+echo "   Syncing soul/ (skip existing) …"
+for f in $(find "$PROJECT_DIR/soul" -type f); do
+    rel="${f#$PROJECT_DIR/}"   # e.g. soul/personality.md
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/$rel" || {
+        scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
+        echo "   + $rel"
+    }
+done
 
-# Python-Skills
-scp -r "$PROJECT_DIR/skills/" "$REMOTE_HOST:$REMOTE_DIR/skills/"
+# Python-Skills — always overwrite (code updates)
+# Use individual file copy to avoid double-nesting (scp -r dir/ into existing dir/ creates dir/dir/)
+ssh "$REMOTE_HOST" "find $REMOTE_DIR/skills -name '*.py' -delete 2>/dev/null || true"
+for f in $(find "$PROJECT_DIR/skills" -type f -name '*.py'); do
+    rel="${f#$PROJECT_DIR/}"   # e.g. skills/current_datetime.py
+    scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
+done
+echo "   ✓ Python skills synced"
 
-# Cron-Jobs (falls vorhanden)
+# Cron-Jobs — never overwrite (runtime data)
 if [ -f "$PROJECT_DIR/cron/jobs.json" ]; then
-    scp "$PROJECT_DIR/cron/jobs.json" "$REMOTE_HOST:$REMOTE_DIR/cron/jobs.json"
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/cron/jobs.json" || \
+        scp "$PROJECT_DIR/cron/jobs.json" "$REMOTE_HOST:$REMOTE_DIR/cron/jobs.json"
 fi
 
 # Docker files (for sandbox mode)

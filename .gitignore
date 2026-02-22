@@ -1,2 +1,3 @@
 vaultagent/target/
-vaultagent/.env
+vaultagent/.env*
+agents.md

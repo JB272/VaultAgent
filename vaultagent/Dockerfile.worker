@@ -6,8 +6,9 @@
 
 FROM python:3.11-slim-bookworm
 
-# Non-root user for the worker process
-RUN useradd --system --no-create-home --shell /bin/false worker
+# Create a user with UID 1000 to match the typical host user.
+# docker-compose.yml also sets user: "1000:1000" as an override.
+RUN useradd --uid 1000 --no-create-home --shell /bin/false worker
 
 # Copy the statically-linked binary (cross-compiled for the target arch)
 COPY vaultagent /usr/local/bin/vaultagent

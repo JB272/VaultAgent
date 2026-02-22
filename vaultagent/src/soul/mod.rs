@@ -37,7 +37,7 @@ impl Soul {
         let memory_block = self.memory.context_block();
 
         if memory_block.is_empty() {
-            base.to_string()
+            base
         } else {
             format!("{}\n{}", base, memory_block)
         }

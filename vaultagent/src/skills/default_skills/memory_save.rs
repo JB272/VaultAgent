@@ -61,23 +61,31 @@ impl Skill for MemorySaveSkill {
             .and_then(Value::as_str)
             .unwrap_or("daily");
 
+        println!("[MemorySave] Saving to '{}': {}…", storage, &entry[..entry.len().min(80)]);
+
         let result = match storage {
             "long_term" => self.memory.append_long_term(entry).await,
             _ => self.memory.append_today(entry).await,
         };
 
         match result {
-            Ok(()) => json!({
-                "ok": true,
-                "storage": storage,
-                "message": format!("Memory saved ({}).", storage),
-            })
-            .to_string(),
-            Err(err) => json!({
-                "ok": false,
-                "error": err,
-            })
-            .to_string(),
+            Ok(()) => {
+                println!("[MemorySave] OK — saved to {}", storage);
+                json!({
+                    "ok": true,
+                    "storage": storage,
+                    "message": format!("Memory saved ({}).", storage),
+                })
+                .to_string()
+            }
+            Err(err) => {
+                eprintln!("[MemorySave] ERROR: {}", err);
+                json!({
+                    "ok": false,
+                    "error": err,
+                })
+                .to_string()
+            }
         }
     }
 }

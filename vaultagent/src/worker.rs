@@ -112,19 +112,27 @@ async fn execute(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    println!("[Worker] Executing skill: {}", req.name);
+    println!("[Worker] Executing skill: {} | args: {}", req.name, req.arguments);
 
     match state.skills.execute(&req.name, &req.arguments).await {
-        Some(result) => Ok(Json(ExecuteResponse {
-            ok: true,
-            result: Some(result),
-            error: None,
-        })),
-        None => Ok(Json(ExecuteResponse {
-            ok: false,
-            result: None,
-            error: Some(format!("Unknown skill: {}", req.name)),
-        })),
+        Some(result) => {
+            // Log first 200 chars of result for debugging
+            let preview: String = result.chars().take(200).collect();
+            println!("[Worker] Skill '{}' result: {}…", req.name, preview);
+            Ok(Json(ExecuteResponse {
+                ok: true,
+                result: Some(result),
+                error: None,
+            }))
+        }
+        None => {
+            eprintln!("[Worker] Unknown skill requested: {}", req.name);
+            Ok(Json(ExecuteResponse {
+                ok: false,
+                result: None,
+                error: Some(format!("Unknown skill: {}", req.name)),
+            }))
+        }
     }
 }
 
@@ -142,8 +150,27 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
         .and_then(|v| v.parse().ok())
         .unwrap_or(9100);
 
+    // ── Startup diagnostics ───────────────────────────────
+    println!("[Worker] PID: {}, UID: {}", std::process::id(), unsafe { libc::getuid() });
+    println!("[Worker] CWD: {:?}", std::env::current_dir().unwrap_or_default());
+
     // ── Load Soul (for memory skills) ────────────────────
     let soul_dir = std::env::var("SOUL_DIR").unwrap_or_else(|_| "soul".to_string());
+    println!("[Worker] SOUL_DIR = {}", soul_dir);
+
+    // Quick write-permission check
+    let test_path = Path::new(&soul_dir).join(".write_test");
+    match std::fs::write(&test_path, "ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&test_path);
+            println!("[Worker] ✓ Soul directory is writable");
+        }
+        Err(e) => {
+            eprintln!("[Worker] ✗ Soul directory is NOT writable: {}", e);
+            eprintln!("[Worker]   Ensure the mounted volume has correct ownership (UID 1000).");
+        }
+    }
+
     let soul = Arc::new(Soul::load(Path::new(&soul_dir)));
 
     // ── Load Cron Store ──────────────────────────────────

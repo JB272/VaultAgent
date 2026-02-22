@@ -35,9 +35,12 @@ impl Skill for ListDirectorySkill {
     async fn execute(&self, arguments: &Value) -> String {
         let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
 
+        println!("[ListDir] Listing '{}'", path);
+
         let safe_path = match sanitize_relative_path(path) {
             Ok(p) => p,
             Err(err) => {
+                eprintln!("[ListDir] Path rejected: {}", err);
                 return json!({ "ok": false, "error": err }).to_string();
             }
         };
@@ -47,6 +50,7 @@ impl Skill for ListDirectorySkill {
         let mut read_dir = match tokio::fs::read_dir(&safe_path).await {
             Ok(rd) => rd,
             Err(err) => {
+                eprintln!("[ListDir] ERROR reading '{}': {}", safe_path.display(), err);
                 return json!({
                     "ok": false,
                     "error": format!("Failed to read directory: {}", err),

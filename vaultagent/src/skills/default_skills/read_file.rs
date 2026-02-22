@@ -35,25 +35,36 @@ impl Skill for ReadFileSkill {
             .and_then(Value::as_str)
             .unwrap_or_default();
 
+        println!("[ReadFile] Reading '{}'", path);
+
         match sanitize_relative_path(path) {
             Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
-                Ok(content) => json!({
-                    "ok": true,
-                    "path": safe_path.to_string_lossy(),
-                    "content": content,
-                })
-                .to_string(),
-                Err(err) => json!({
-                    "ok": false,
-                    "error": format!("Failed to read file: {}", err),
-                })
-                .to_string(),
+                Ok(content) => {
+                    println!("[ReadFile] OK — {} bytes from {}", content.len(), safe_path.display());
+                    json!({
+                        "ok": true,
+                        "path": safe_path.to_string_lossy(),
+                        "content": content,
+                    })
+                    .to_string()
+                }
+                Err(err) => {
+                    eprintln!("[ReadFile] ERROR reading '{}': {}", safe_path.display(), err);
+                    json!({
+                        "ok": false,
+                        "error": format!("Failed to read file: {}", err),
+                    })
+                    .to_string()
+                }
             },
-            Err(err) => json!({
-                "ok": false,
-                "error": err,
-            })
-            .to_string(),
+            Err(err) => {
+                eprintln!("[ReadFile] Path rejected: {}", err);
+                json!({
+                    "ok": false,
+                    "error": err,
+                })
+                .to_string()
+            }
         }
     }
 }

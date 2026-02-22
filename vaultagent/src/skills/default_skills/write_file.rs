@@ -44,11 +44,20 @@ impl Skill for WriteFileSkill {
             .and_then(Value::as_str)
             .unwrap_or_default();
 
+        println!("[WriteFile] Writing to '{}' ({} bytes)", path, content.len());
+
         match sanitize_relative_path(path) {
             Ok(safe_path) => {
+                let abs_path = std::env::current_dir()
+                    .map(|cwd| cwd.join(&safe_path))
+                    .unwrap_or_else(|_| safe_path.clone());
+                println!("[WriteFile] Resolved path: {}", abs_path.display());
+
                 if let Some(parent) = safe_path.parent() {
                     if !parent.as_os_str().is_empty() {
+                        println!("[WriteFile] Creating parent dirs: {}", parent.display());
                         if let Err(err) = tokio::fs::create_dir_all(parent).await {
+                            eprintln!("[WriteFile] ERROR creating dirs: {}", err);
                             return json!({
                                 "ok": false,
                                 "error": format!("Failed to create directories: {}", err),
@@ -59,24 +68,33 @@ impl Skill for WriteFileSkill {
                 }
 
                 match tokio::fs::write(&safe_path, content).await {
-                    Ok(()) => json!({
-                        "ok": true,
-                        "path": safe_path.to_string_lossy(),
-                        "bytes_written": content.len(),
-                    })
-                    .to_string(),
-                    Err(err) => json!({
-                        "ok": false,
-                        "error": format!("Failed to write file: {}", err),
-                    })
-                    .to_string(),
+                    Ok(()) => {
+                        println!("[WriteFile] OK — wrote {} bytes to {}", content.len(), safe_path.display());
+                        json!({
+                            "ok": true,
+                            "path": safe_path.to_string_lossy(),
+                            "bytes_written": content.len(),
+                        })
+                        .to_string()
+                    }
+                    Err(err) => {
+                        eprintln!("[WriteFile] ERROR writing file: {}", err);
+                        json!({
+                            "ok": false,
+                            "error": format!("Failed to write file: {}", err),
+                        })
+                        .to_string()
+                    }
                 }
             }
-            Err(err) => json!({
-                "ok": false,
-                "error": err,
-            })
-            .to_string(),
+            Err(err) => {
+                eprintln!("[WriteFile] Path rejected: {}", err);
+                json!({
+                    "ok": false,
+                    "error": err,
+                })
+                .to_string()
+            }
         }
     }
 }

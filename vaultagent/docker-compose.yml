@@ -18,6 +18,11 @@ services:
     container_name: vaultagent-worker
     restart: unless-stopped
 
+    # ── User ──────────────────────────────────────────
+    # Run as the same UID/GID as the host user so mounted volumes
+    # are writable without permission issues.
+    user: "1000:1000"
+
     # ── Volumes ───────────────────────────────────────
     # Mount workspace directories into the container.
     # The worker can read and write these freely.

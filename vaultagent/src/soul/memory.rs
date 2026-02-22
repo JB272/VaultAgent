@@ -91,6 +91,7 @@ impl Memory {
     /// Appends an entry to today's daily log (append-only).
     pub async fn append_today(&self, entry: &str) -> Result<(), String> {
         let path = self.daily_path_for_today();
+        println!("[Memory] append_today → {}", path.display());
 
         // Header if file does not exist yet
         let needs_header = !path.exists();
@@ -99,6 +100,7 @@ impl Memory {
         if needs_header {
             let date = Local::now().date_naive();
             content.push_str(&format!("# Daily Log {}\n\n", date.format("%d.%m.%Y")));
+            println!("[Memory] Creating new daily log for {}", date);
         }
 
         let time = Local::now().format("%H:%M");
@@ -109,17 +111,25 @@ impl Memory {
             .append(true)
             .open(&path)
             .await
-            .map_err(|e| format!("Could not open daily log: {}", e))?
+            .map_err(|e| {
+                eprintln!("[Memory] ERROR opening daily log '{}': {}", path.display(), e);
+                format!("Could not open daily log: {}", e)
+            })?
             .write_all(content.as_bytes())
             .await
-            .map_err(|e| format!("Could not write to daily log: {}", e))?;
+            .map_err(|e| {
+                eprintln!("[Memory] ERROR writing daily log: {}", e);
+                format!("Could not write to daily log: {}", e)
+            })?;
 
+        println!("[Memory] OK — appended to daily log");
         Ok(())
     }
 
     /// Appends an entry to MEMORY.md (long-term memory).
     pub async fn append_long_term(&self, entry: &str) -> Result<(), String> {
         let path = self.soul_dir.join("MEMORY.md");
+        println!("[Memory] append_long_term → {}", path.display());
 
         let content = format!("\n- {}\n", entry.trim());
 
@@ -128,11 +138,18 @@ impl Memory {
             .append(true)
             .open(&path)
             .await
-            .map_err(|e| format!("Could not open MEMORY.md: {}", e))?
+            .map_err(|e| {
+                eprintln!("[Memory] ERROR opening MEMORY.md '{}': {}", path.display(), e);
+                format!("Could not open MEMORY.md: {}", e)
+            })?
             .write_all(content.as_bytes())
             .await
-            .map_err(|e| format!("Could not write to MEMORY.md: {}", e))?;
+            .map_err(|e| {
+                eprintln!("[Memory] ERROR writing MEMORY.md: {}", e);
+                format!("Could not write to MEMORY.md: {}", e)
+            })?;
 
+        println!("[Memory] OK — appended to MEMORY.md");
         Ok(())
     }
 
