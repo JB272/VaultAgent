@@ -49,6 +49,7 @@ You are [name], a [personality description] personal AI assistant for [user name
 ### 2. Save key facts to long-term memory
 
 Use `memory_save` with `storage: "long_term"` to save the most important facts, for example:
+
 - "User's name is [name], lives in [city], timezone [tz]."
 - "Bot was configured on [date]. Name: [name]. Tone: [tone]."
 

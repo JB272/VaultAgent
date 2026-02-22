@@ -79,10 +79,7 @@ impl Memory {
         if parts.is_empty() {
             String::new()
         } else {
-            format!(
-                "\n\n---\n# Your Memory\n\n{}\n---\n",
-                parts.join("\n\n")
-            )
+            format!("\n\n---\n# Your Memory\n\n{}\n---\n", parts.join("\n\n"))
         }
     }
 
@@ -112,7 +109,11 @@ impl Memory {
             .open(&path)
             .await
             .map_err(|e| {
-                eprintln!("[Memory] ERROR opening daily log '{}': {}", path.display(), e);
+                eprintln!(
+                    "[Memory] ERROR opening daily log '{}': {}",
+                    path.display(),
+                    e
+                );
                 format!("Could not open daily log: {}", e)
             })?
             .write_all(content.as_bytes())
@@ -139,7 +140,11 @@ impl Memory {
             .open(&path)
             .await
             .map_err(|e| {
-                eprintln!("[Memory] ERROR opening MEMORY.md '{}': {}", path.display(), e);
+                eprintln!(
+                    "[Memory] ERROR opening MEMORY.md '{}': {}",
+                    path.display(),
+                    e
+                );
                 format!("Could not open MEMORY.md: {}", e)
             })?
             .write_all(content.as_bytes())
