@@ -114,6 +114,8 @@ impl TelegramBot {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Register commands with Telegram so they show in the command menu.
         let commands = [
+            ("new", "Neue Konversation starten"),
+            ("window", "Context Window Auslastung anzeigen"),
             ("tools", "List all available skills/tools"),
             ("stats", "Today's LLM token usage"),
             ("models", "Show or switch the active LLM model"),
@@ -186,7 +188,7 @@ impl TelegramBot {
 
                                     // Handle slash commands before forwarding to the agent.
                                     if let Some(text) = message.text.as_deref() {
-                                        if let Some(reply) = handle_command(text, &bot).await {
+                                        if let Some(reply) = handle_command(text, &bot, message.chat.id).await {
                                             let _ = bot.send_html(message.chat.id, reply).await;
                                             continue;
                                         }
@@ -441,7 +443,7 @@ impl TelegramBot {
 }
 
 /// Handles slash commands. Returns `Some(reply)` if handled, `None` to forward to the agent.
-async fn handle_command(text: &str, bot: &TelegramBot) -> Option<String> {
+async fn handle_command(text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
     let text = text.trim();
 
     if text == "/reboot" {
@@ -452,6 +454,20 @@ async fn handle_command(text: &str, bot: &TelegramBot) -> Option<String> {
             std::process::exit(0);
         });
         return Some("♻️ Rebooting...".to_string());
+    }
+
+    if text == "/new" {
+        if let Some(ref agent) = bot.agent {
+            agent.clear_history().await;
+        }
+        return Some("🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string());
+    }
+
+    if text == "/window" {
+        if let Some(ref agent) = bot.agent {
+            return Some(agent.context_window_info().await);
+        }
+        return Some("No agent configured.".to_string());
     }
 
     if text == "/tools" {
@@ -709,7 +725,7 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
 
         // Handle slash commands
         if let Some(text) = message.text.as_deref() {
-            if let Some(reply) = handle_command(text, &state.bot).await {
+            if let Some(reply) = handle_command(text, &state.bot, message.chat.id).await {
                 let _ = state.bot.send_html(message.chat.id, reply).await;
                 return StatusCode::OK;
             }

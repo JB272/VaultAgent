@@ -115,6 +115,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     chat.chat_id, chat.text
                 );
 
+                // ── Handle slash commands (works across all channels) ──
+                let trimmed = chat.text.trim();
+                if let Some(reply) = handle_global_command(trimmed, &agent).await {
+                    gateways.broadcast_reply(chat.chat_id, &reply).await;
+                    continue;
+                }
+
                 let gw = Arc::clone(&gateways);
                 let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
                 let chat_id = chat.chat_id;
@@ -168,5 +175,42 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 gateways.broadcast_typing(cron_action.chat_id, false).await;
             }
         }
+    }
+}
+
+/// Handles slash commands globally (all channels: Website, Telegram, etc.).
+/// Returns `Some(reply)` if handled, `None` to forward to the agent.
+async fn handle_global_command(text: &str, agent: &Agent) -> Option<String> {
+    match text {
+        "/new" => {
+            agent.clear_history().await;
+            Some("🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string())
+        }
+        "/window" => Some(agent.context_window_info().await),
+        "/tools" => {
+            let names = agent.skill_names();
+            let list = names
+                .iter()
+                .map(|n| format!("• {n}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!("🛠 Available tools:\n\n{list}"))
+        }
+        "/stats" => {
+            if let Some(ref usage) = agent.usage {
+                Some(usage.stats_message().await)
+            } else {
+                Some("No usage data available.".to_string())
+            }
+        }
+        "/reboot" => {
+            println!("[Main] Reboot requested via command");
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                std::process::exit(0);
+            });
+            Some("♻️ Rebooting...".to_string())
+        }
+        _ => None,
     }
 }

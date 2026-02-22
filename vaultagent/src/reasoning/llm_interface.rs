@@ -1,8 +1,9 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmRole {
     Developer,
     System,
@@ -23,19 +24,19 @@ impl LlmRole {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmMessageContent {
     Text(String),
     Parts(Vec<LlmContentPart>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LlmContentPart {
     Text { text: String },
     ImageUrl { url: String, detail: Option<String> },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
     pub role: LlmRole,
     pub content: LlmMessageContent,
@@ -70,7 +71,7 @@ pub enum LlmResponseFormat {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmToolCall {
     pub id: Option<String>,
     pub name: String,
