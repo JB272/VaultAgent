@@ -172,6 +172,11 @@ impl TelegramBot {
                             for update in updates {
                                 offset = Some(update.update_id + 1);
 
+                                if let Some(ref cq) = update.callback_query {
+                                    handle_callback_query(cq, &bot).await;
+                                    continue;
+                                }
+
                                 if let Some(ref message) = update.message {
                                     // Check chat ID allowlist
                                     if let Some(ref allowed) = bot.allowed_chat_ids {
@@ -188,10 +193,19 @@ impl TelegramBot {
 
                                     // Handle slash commands before forwarding to the agent.
                                     if let Some(text) = message.text.as_deref() {
-                                        if let Some(reply) =
+                                        if let Some(result) =
                                             handle_command(text, &bot, message.chat.id).await
                                         {
-                                            let _ = bot.send_html(message.chat.id, reply).await;
+                                            match result {
+                                                CommandResult::Text(reply) => {
+                                                    let _ = bot.send_html(message.chat.id, reply).await;
+                                                }
+                                                CommandResult::Keyboard { text, markup } => {
+                                                    let _ = bot
+                                                        .send_keyboard_message(message.chat.id, text, markup)
+                                                        .await;
+                                                }
+                                            }
                                             continue;
                                         }
                                     }
@@ -442,10 +456,179 @@ impl TelegramBot {
 
         Ok(())
     }
+
+    pub async fn send_keyboard_message(
+        &self,
+        chat_id: i64,
+        text: impl Into<String>,
+        markup: InlineKeyboardMarkup,
+    ) -> Result<Message, Box<dyn Error + Send + Sync>> {
+        let request = SendMessageWithKeyboardRequest {
+            chat_id,
+            text: text.into(),
+            parse_mode: "HTML".to_string(),
+            reply_markup: markup,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/sendMessage", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<Message> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+        body.result
+            .ok_or_else(|| "Telegram API returned no message".into())
+    }
+
+    pub async fn answer_callback_query(
+        &self,
+        callback_query_id: &str,
+        text: Option<String>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let request = AnswerCallbackQueryRequest {
+            callback_query_id: callback_query_id.to_string(),
+            text,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/answerCallbackQuery", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<bool> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+        Ok(())
+    }
+
+    pub async fn edit_message_text(
+        &self,
+        chat_id: i64,
+        message_id: i64,
+        text: impl Into<String>,
+        reply_markup: Option<InlineKeyboardMarkup>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let request = EditMessageTextRequest {
+            chat_id,
+            message_id,
+            text: text.into(),
+            parse_mode: "HTML".to_string(),
+            reply_markup,
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/editMessageText", self.base_url))
+            .json(&request)
+            .send()
+            .await?;
+
+        let body: ApiResponse<Message> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+        Ok(())
+    }
 }
 
-/// Handles slash commands. Returns `Some(reply)` if handled, `None` to forward to the agent.
-async fn handle_command(text: &str, bot: &TelegramBot, chat_id: i64) -> Option<String> {
+/// Result returned by a slash-command handler.
+enum CommandResult {
+    Text(String),
+    Keyboard {
+        text: String,
+        markup: InlineKeyboardMarkup,
+    },
+}
+
+/// Keeps only chat-relevant models for display in the picker.
+fn filter_models_for_display(models: Vec<String>, provider: &str) -> Vec<String> {
+    if provider == "anthropic" {
+        let mut v: Vec<String> = models
+            .into_iter()
+            .filter(|m| m.starts_with("claude"))
+            .collect();
+        v.sort();
+        v
+    } else {
+        // OpenAI-compatible: skip embeddings, TTS, image-gen, fine-tunes, etc.
+        let prefixes = ["gpt-4", "gpt-3.5-turbo", "o1", "o3", "chatgpt-4o"];
+        let mut v: Vec<String> = models
+            .into_iter()
+            .filter(|m| prefixes.iter().any(|p| m.starts_with(p)))
+            .collect();
+        v.sort();
+        v
+    }
+}
+
+fn build_model_keyboard(models: &[String], current: &str) -> InlineKeyboardMarkup {
+    let rows = models
+        .iter()
+        .map(|m| {
+            let label = if m == current {
+                format!("✅ {m}")
+            } else {
+                m.clone()
+            };
+            vec![InlineKeyboardButton {
+                text: label,
+                callback_data: format!("model:{m}"),
+            }]
+        })
+        .collect();
+    InlineKeyboardMarkup { inline_keyboard: rows }
+}
+
+async fn handle_callback_query(query: &CallbackQuery, bot: &TelegramBot) {
+    let Some(data) = query.data.as_deref() else {
+        return;
+    };
+
+    if let Some(model_name) = data.strip_prefix("model:") {
+        let Some(ref llm) = bot.llm else {
+            return;
+        };
+        llm.set_model(model_name.to_string());
+
+        let _ = bot
+            .answer_callback_query(&query.id, Some(format!("✅ {model_name}")))
+            .await;
+
+        if let Some(ref msg) = query.message {
+            let available = llm.list_models().await;
+            let filtered = filter_models_for_display(available, llm.provider_name());
+            let markup = build_model_keyboard(&filtered, model_name);
+            let _ = bot
+                .edit_message_text(
+                    msg.chat.id,
+                    msg.message_id,
+                    format!("🤖 <b>Select model</b> (✅ = active):\nCurrent: <code>{model_name}</code>"),
+                    Some(markup),
+                )
+                .await;
+        }
+    }
+}
+
+/// Handles slash commands. Returns `Some(CommandResult)` if handled, `None` to forward to the agent.
+async fn handle_command(text: &str, bot: &TelegramBot, _chat_id: i64) -> Option<CommandResult> {
     let text = text.trim();
 
     if text == "/reboot" {
@@ -455,21 +638,23 @@ async fn handle_command(text: &str, bot: &TelegramBot, chat_id: i64) -> Option<S
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             std::process::exit(0);
         });
-        return Some("♻️ Rebooting...".to_string());
+        return Some(CommandResult::Text("♻️ Rebooting...".to_string()));
     }
 
     if text == "/new" {
         if let Some(ref agent) = bot.agent {
             agent.clear_history().await;
         }
-        return Some("🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string());
+        return Some(CommandResult::Text(
+            "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string(),
+        ));
     }
 
     if text == "/window" {
         if let Some(ref agent) = bot.agent {
-            return Some(agent.context_window_info().await);
+            return Some(CommandResult::Text(agent.context_window_info().await));
         }
-        return Some("No agent configured.".to_string());
+        return Some(CommandResult::Text("No agent configured.".to_string()));
     }
 
     if text == "/tools" {
@@ -480,60 +665,57 @@ async fn handle_command(text: &str, bot: &TelegramBot, chat_id: i64) -> Option<S
                 .map(|n| format!("• <code>{n}</code>"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            return Some(format!("🛠 <b>Available tools:</b>\n\n{list}"));
+            return Some(CommandResult::Text(format!("🛠 <b>Available tools:</b>\n\n{list}")));
         }
-        return Some("No agent configured.".to_string());
+        return Some(CommandResult::Text("No agent configured.".to_string()));
     }
 
     if text == "/stats" {
         if let Some(ref agent) = bot.agent {
             if let Some(ref usage) = agent.usage {
-                return Some(usage.stats_message().await);
+                return Some(CommandResult::Text(usage.stats_message().await));
             }
         }
-        return Some("No usage data available.".to_string());
+        return Some(CommandResult::Text("No usage data available.".to_string()));
     }
 
-    // /models — list all available models
+    // /models — inline keyboard model picker
     if text == "/models" {
         if let Some(ref llm) = bot.llm {
             let current = llm.current_model();
             let available = llm.list_models().await;
-            if available.is_empty() {
-                return Some(format!(
-                    "🤖 <b>Current model:</b> <code>{}</code>\n\nCould not fetch model list from provider.\nUse <code>/models &lt;name&gt;</code> to switch.",
-                    current
-                ));
+            let filtered = filter_models_for_display(available, llm.provider_name());
+            if filtered.is_empty() {
+                return Some(CommandResult::Text(format!(
+                    "🤖 <b>Current model:</b> <code>{current}</code>\n\nCould not fetch model list from provider.\nUse <code>/models &lt;name&gt;</code> to switch."
+                )));
             }
-            let list = available
-                .iter()
-                .map(|m| {
-                    if m == &current {
-                        format!("✅ <code>{m}</code>")
-                    } else {
-                        format!("• <code>{m}</code>")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Some(format!(
-                "🤖 <b>Available models</b> (✅ = active):\n\n{list}\n\nUse <code>/models &lt;name&gt;</code> to switch."
-            ));
+            let markup = build_model_keyboard(&filtered, &current);
+            return Some(CommandResult::Keyboard {
+                text: format!(
+                    "🤖 <b>Select model</b> (✅ = active):\nCurrent: <code>{current}</code>"
+                ),
+                markup,
+            });
         }
-        return Some("No LLM configured.".to_string());
+        return Some(CommandResult::Text("No LLM configured.".to_string()));
     }
 
-    // /models <name> — switch model
+    // /models <name> — switch model directly
     if let Some(model) = text.strip_prefix("/models ") {
         let model = model.trim().to_string();
         if model.is_empty() {
-            return Some("Usage: <code>/models &lt;model-name&gt;</code>".to_string());
+            return Some(CommandResult::Text(
+                "Usage: <code>/models &lt;model-name&gt;</code>".to_string(),
+            ));
         }
         if let Some(ref llm) = bot.llm {
             llm.set_model(model.clone());
-            return Some(format!("✅ Switched to model <code>{model}</code>"));
+            return Some(CommandResult::Text(format!(
+                "✅ Switched to model <code>{model}</code>"
+            )));
         }
-        return Some("No LLM configured.".to_string());
+        return Some(CommandResult::Text("No LLM configured.".to_string()));
     }
 
     None
@@ -710,6 +892,11 @@ async fn health() -> StatusCode {
 }
 
 async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Update>) -> StatusCode {
+    if let Some(ref cq) = update.callback_query {
+        handle_callback_query(cq, &state.bot).await;
+        return StatusCode::OK;
+    }
+
     if let Some(ref message) = update.message {
         // Check chat ID allowlist
         if let Some(ref allowed) = state.bot.allowed_chat_ids {
@@ -727,8 +914,18 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
 
         // Handle slash commands
         if let Some(text) = message.text.as_deref() {
-            if let Some(reply) = handle_command(text, &state.bot, message.chat.id).await {
-                let _ = state.bot.send_html(message.chat.id, reply).await;
+            if let Some(result) = handle_command(text, &state.bot, message.chat.id).await {
+                match result {
+                    CommandResult::Text(reply) => {
+                        let _ = state.bot.send_html(message.chat.id, reply).await;
+                    }
+                    CommandResult::Keyboard { text, markup } => {
+                        let _ = state
+                            .bot
+                            .send_keyboard_message(message.chat.id, text, markup)
+                            .await;
+                    }
+                }
                 return StatusCode::OK;
             }
         }
@@ -801,6 +998,7 @@ struct TelegramFile {
 pub struct Update {
     pub update_id: i64,
     pub message: Option<Message>,
+    pub callback_query: Option<CallbackQuery>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -835,4 +1033,51 @@ pub struct Audio {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Chat {
     pub id: i64,
+}
+
+// ── Callback query ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CallbackQuery {
+    pub id: String,
+    pub message: Option<Message>,
+    pub data: Option<String>,
+}
+
+// ── Inline keyboard ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Clone)]
+struct InlineKeyboardButton {
+    text: String,
+    callback_data: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct InlineKeyboardMarkup {
+    inline_keyboard: Vec<Vec<InlineKeyboardButton>>,
+}
+
+#[derive(Debug, Serialize)]
+struct SendMessageWithKeyboardRequest {
+    chat_id: i64,
+    text: String,
+    parse_mode: String,
+    reply_markup: InlineKeyboardMarkup,
+}
+
+#[derive(Debug, Serialize)]
+struct EditMessageTextRequest {
+    chat_id: i64,
+    message_id: i64,
+    text: String,
+    parse_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reply_markup: Option<InlineKeyboardMarkup>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnswerCallbackQueryRequest {
+    callback_query_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
