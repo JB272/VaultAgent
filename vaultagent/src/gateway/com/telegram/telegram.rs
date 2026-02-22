@@ -192,12 +192,13 @@ impl TelegramBot {
                                         }
                                     }
 
-                                    if let Some(text) =
-                                        extract_text_or_transcribe(&bot, message).await
+                                    if let Some(content) =
+                                        extract_content(&bot, message).await
                                     {
                                         let action = IncomingAction::Chat(ChatAction {
                                             chat_id: message.chat.id,
-                                            text,
+                                            text: content.text,
+                                            image_url: content.image_url,
                                         });
                                         incoming_writer.push(action).await;
                                     }
@@ -581,14 +582,58 @@ impl Gateway for TelegramBot {
     }
 }
 
-/// Extracts text from a message — either directly or by transcribing Voice/Audio.
-async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Option<String> {
-    // 1) Regular text message
-    if let Some(ref text) = message.text {
-        return Some(text.clone());
+/// Extracted content from a Telegram message.
+struct ExtractedContent {
+    text: String,
+    /// Base64 data-URL for an image, if present.
+    image_url: Option<String>,
+}
+
+/// Extracts text (and optionally an image) from a Telegram message.
+async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<ExtractedContent> {
+    // 1) Photo message → download largest resolution, encode as base64 data URL
+    if let Some(ref photos) = message.photo {
+        if let Some(largest) = photos.last() {
+            let text = message
+                .caption
+                .clone()
+                .unwrap_or_else(|| "[Image]".to_string());
+
+            match bot.get_file_path(&largest.file_id).await {
+                Ok(file_path) => match bot.download_file(&file_path).await {
+                    Ok(data) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        let data_url = format!("data:image/jpeg;base64,{}", b64);
+                        println!(
+                            "[Telegram][Photo] Downloaded {}x{} photo ({} bytes)",
+                            largest.width, largest.height, data.len()
+                        );
+                        return Some(ExtractedContent {
+                            text,
+                            image_url: Some(data_url),
+                        });
+                    }
+                    Err(err) => {
+                        eprintln!("[Telegram][Photo] Failed to download: {}", err);
+                    }
+                },
+                Err(err) => {
+                    eprintln!("[Telegram][Photo] Failed to get file path: {}", err);
+                }
+            }
+        }
     }
 
-    // 2) Voice memo or audio file → transcribe
+    // 2) Regular text message
+    if let Some(ref text) = message.text {
+        return Some(ExtractedContent {
+            text: text.clone(),
+            image_url: None,
+        });
+    }
+
+    // 3) Voice memo or audio file → transcribe
     let audio_info = message.voice.as_ref().or(message.audio.as_ref())?;
     let transcription_service = bot.transcription.as_ref()?;
 
@@ -605,7 +650,10 @@ async fn extract_text_or_transcribe(bot: &TelegramBot, message: &Message) -> Opt
                 match transcription_service.transcribe(data, mime).await {
                     Ok(text) if !text.trim().is_empty() => {
                         println!("[Telegram][Voice] Transcription: {}", text);
-                        Some(format!("[Voice message] {}", text))
+                        Some(ExtractedContent {
+                            text: format!("[Voice message] {}", text),
+                            image_url: None,
+                        })
                     }
                     Ok(_) => {
                         eprintln!("[Telegram][Voice] Transcription returned empty text.");
@@ -667,10 +715,11 @@ async fn telegram_webhook(State(state): State<AppState>, Json(update): Json<Upda
             }
         }
 
-        if let Some(text) = extract_text_or_transcribe(&state.bot, message).await {
+        if let Some(content) = extract_content(&state.bot, message).await {
             let action = IncomingAction::Chat(ChatAction {
                 chat_id: message.chat.id,
-                text,
+                text: content.text,
+                image_url: content.image_url,
             });
 
             state.incoming_writer.push(action).await;
@@ -740,9 +789,21 @@ pub struct Update {
 pub struct Message {
     pub message_id: i64,
     pub text: Option<String>,
+    pub caption: Option<String>,
     pub chat: Chat,
     pub voice: Option<Audio>,
     pub audio: Option<Audio>,
+    /// Array of available photo sizes (smallest → largest).
+    pub photo: Option<Vec<PhotoSize>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhotoSize {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: u32,
+    pub height: u32,
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

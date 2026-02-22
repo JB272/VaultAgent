@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 
 use crate::reasoning::usage::UsageCounter;
 use crate::reasoning::llm_interface::{
-    LlmChatRequest, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
+    LlmChatRequest, LlmContentPart, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
 };
 use crate::skills::SkillRegistry;
 use crate::soul::Soul;
@@ -67,9 +67,25 @@ impl Agent {
     /// The conversation history is preserved across calls.
     /// `chat_id` is passed as context so skills like cron_add know
     /// which chat to send the response to.
-    pub async fn process(&self, user_text: &str, chat_id: i64) -> String {
+    /// `image_url` — optional base64 data-URL of an attached image (vision).
+    pub async fn process(&self, user_text: &str, chat_id: i64, image_url: Option<&str>) -> String {
         let Some(llm) = &self.llm else {
             return "LLM is not configured. Set LLM_API_KEY to receive responses.".to_string();
+        };
+
+        // Build user message content — with optional image for vision
+        let user_content = if let Some(url) = image_url {
+            LlmMessageContent::Parts(vec![
+                LlmContentPart::Text {
+                    text: user_text.to_string(),
+                },
+                LlmContentPart::ImageUrl {
+                    url: url.to_string(),
+                    detail: Some("auto".to_string()),
+                },
+            ])
+        } else {
+            LlmMessageContent::Text(user_text.to_string())
         };
 
         // Append user message to persistent history
@@ -77,7 +93,7 @@ impl Agent {
             let mut history = self.history.lock().await;
             history.push(LlmMessage {
                 role: LlmRole::User,
-                content: LlmMessageContent::Text(user_text.to_string()),
+                content: user_content,
                 name: None,
                 tool_call_id: None,
                 tool_calls: Vec::new(),

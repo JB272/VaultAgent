@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                 });
 
-                let reply = agent.process(&chat.text, chat.chat_id).await;
+                let reply = agent.process(&chat.text, chat.chat_id, chat.image_url.as_deref()).await;
                 let _ = cancel_tx.send(());
                 typing_task.await.ok();
 
@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 });
 
                 let reply = agent
-                    .process(&cron_action.prompt, cron_action.chat_id)
+                    .process(&cron_action.prompt, cron_action.chat_id, None)
                     .await;
                 let _ = cancel_tx.send(());
                 typing_task.await.ok();

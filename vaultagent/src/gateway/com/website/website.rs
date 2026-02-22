@@ -303,6 +303,7 @@ async fn post_message(
         .push(IncomingAction::Chat(ChatAction {
             chat_id: state.default_chat_id,
             text: trimmed_text.clone(),
+            image_url: None,
         }))
         .await;
 

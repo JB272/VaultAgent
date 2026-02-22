@@ -6,9 +6,13 @@
 
 FROM python:3.11-slim-bookworm
 
+# Install sudo so the worker can install packages at runtime (e.g. apt-get install git)
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create a user with UID 1000 to match the typical host user.
-# docker-compose.yml also sets user: "1000:1000" as an override.
-RUN useradd --uid 1000 --no-create-home --shell /bin/false worker
+RUN useradd --uid 1000 --create-home --shell /bin/bash worker \
+    && echo 'worker ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dpkg, /usr/bin/pip, /usr/bin/pip3' >> /etc/sudoers.d/worker
 
 # Copy the statically-linked binary (cross-compiled for the target arch)
 COPY vaultagent /usr/local/bin/vaultagent

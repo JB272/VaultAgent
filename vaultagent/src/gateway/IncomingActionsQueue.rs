@@ -70,6 +70,8 @@ pub enum IncomingAction {
 pub struct ChatAction {
     pub chat_id: i64,
     pub text: String,
+    /// Optional base64 data-URL of an image (e.g. from a Telegram photo).
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
