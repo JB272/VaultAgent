@@ -19,9 +19,10 @@ impl Skill for ShellExecuteSkill {
             name: "shell_execute".to_string(),
             description: Some(
                 "Executes a shell command inside the sandbox and returns stdout + stderr. \
-                 Use this for tasks like installing Python packages (pip install), \
+                 Use this for tasks like installing packages (sudo apt-get install -y <pkg>), \
                  running scripts, checking system info, data processing with CLI tools, \
                  compiling code, or any task that benefits from shell access. \
+                 Use 'sudo' for apt-get/dpkg/pip when installing system packages. \
                  Commands run as an unprivileged user in a Docker container with no access \
                  to the host system. The working directory is /workspace. \
                  Timeout: 120 seconds. Output is truncated to ~8000 chars."

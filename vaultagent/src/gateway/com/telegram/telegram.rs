@@ -192,9 +192,7 @@ impl TelegramBot {
                                         }
                                     }
 
-                                    if let Some(content) =
-                                        extract_content(&bot, message).await
-                                    {
+                                    if let Some(content) = extract_content(&bot, message).await {
                                         let action = IncomingAction::Chat(ChatAction {
                                             chat_id: message.chat.id,
                                             text: content.text,
@@ -607,7 +605,9 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                         let data_url = format!("data:image/jpeg;base64,{}", b64);
                         println!(
                             "[Telegram][Photo] Downloaded {}x{} photo ({} bytes)",
-                            largest.width, largest.height, data.len()
+                            largest.width,
+                            largest.height,
+                            data.len()
                         );
                         return Some(ExtractedContent {
                             text,
