@@ -36,19 +36,11 @@ If you are looking for a private AI Telegram bot, a personal AI assistant on you
 - Automation tools: `cron_add`, `cron_list`, `cron_remove`
 - System tool: `shell_execute`
 
-### Current limitations
-
-- Streaming responses are not implemented yet
-- Shared global conversation history is currently single-session (not isolated per chat/user)
-- No dedicated database backend yet (file-based persistence)
-- Rate limiting and cost guardrails are still minimal
-
-## Background agent processes (important)
+## Background agent processes
 
 VaultAgent already supports background-like behavior, but in a focused way:
 
 - **Cron jobs run in the background** through the internal scheduler and trigger agent tasks automatically
-- **Main service runs continuously** under systemd after deployment, so it is effectively always on
 - **Research subagent runs per request**, not as a permanent autonomous daemon
 
 What is not there yet:

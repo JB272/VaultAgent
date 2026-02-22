@@ -11,6 +11,7 @@ use gateway::com::telegram::setup_telegram;
 use gateway::com::website::setup_website;
 use gateway::incoming_actions_queue::{IncomingAction, IncomingActionQueue};
 use reasoning::agent::Agent;
+use reasoning::llm_apis::anthropic::AnthropicClient;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
@@ -50,14 +51,34 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cron_store = Arc::new(CronStore::load(Path::new(&cron_dir)));
 
     // ── LLM ─────────────────────────────────────────────
-    let llm: Option<std::sync::Arc<dyn LlmInterface>> = match OpenAiCompatibleClient::from_env() {
-        Ok(client) => {
-            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-            Some(std::sync::Arc::new(client))
+    // Select provider via LLM_PROVIDER env var.
+    // Supported values: "anthropic", "openai" (default).
+    // Falls back to OpenAI-compatible if LLM_PROVIDER is unset or unrecognised.
+    let provider = std::env::var("LLM_PROVIDER")
+        .unwrap_or_default()
+        .to_lowercase();
+
+    let llm: Option<std::sync::Arc<dyn LlmInterface>> = if provider == "anthropic" {
+        match AnthropicClient::from_env() {
+            Ok(client) => {
+                println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+                Some(std::sync::Arc::new(client))
+            }
+            Err(err) => {
+                eprintln!("[Main][LLM] Disabled: {}", err);
+                None
+            }
         }
-        Err(err) => {
-            eprintln!("[Main][LLM] Disabled: {}", err);
-            None
+    } else {
+        match OpenAiCompatibleClient::from_env() {
+            Ok(client) => {
+                println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+                Some(std::sync::Arc::new(client))
+            }
+            Err(err) => {
+                eprintln!("[Main][LLM] Disabled: {}", err);
+                None
+            }
         }
     };
 

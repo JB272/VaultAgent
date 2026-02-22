@@ -33,19 +33,19 @@ impl OpenAiCompatibleClient {
     }
 
     pub fn from_env() -> Result<Self, LlmError> {
-        let api_key = std::env::var("LLM_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
             .map_err(|_| {
-                LlmError::Config(
-                    "Set LLM_API_KEY (or OPENAI_API_KEY) as an environment variable.".to_string(),
-                )
+                LlmError::Config("Set OPENAI_API_KEY as an environment variable.".to_string())
             })?;
 
-        let base_url = std::env::var("LLM_BASE_URL")
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .or_else(|_| std::env::var("LLM_BASE_URL"))
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-        let default_model =
-            std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let default_model = std::env::var("OPENAI_MODEL")
+            .or_else(|_| std::env::var("LLM_MODEL"))
+            .unwrap_or_else(|_| "gpt-4o-mini".to_string());
 
         Ok(Self::new(api_key, base_url, default_model))
     }
@@ -309,9 +309,13 @@ impl LlmInterface for OpenAiCompatibleClient {
         };
 
         #[derive(serde::Deserialize)]
-        struct ModelEntry { id: String }
+        struct ModelEntry {
+            id: String,
+        }
         #[derive(serde::Deserialize)]
-        struct ModelList { data: Vec<ModelEntry> }
+        struct ModelList {
+            data: Vec<ModelEntry>,
+        }
 
         match response.json::<ModelList>().await {
             Ok(list) => {

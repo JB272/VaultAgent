@@ -177,7 +177,7 @@ impl Agent {
     /// `image_url` — optional base64 data-URL of an attached image (vision).
     pub async fn process(&self, user_text: &str, chat_id: i64, image_url: Option<&str>) -> String {
         let Some(llm) = &self.llm else {
-            return "LLM is not configured. Set LLM_API_KEY to receive responses.".to_string();
+            return "LLM is not configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY to receive responses.".to_string();
         };
 
         // Build user message content — with optional image for vision

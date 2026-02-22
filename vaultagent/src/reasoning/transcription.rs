@@ -13,15 +13,16 @@ impl TranscriptionService {
     /// Creates a new service from environment variables.
     /// Uses the same API key and base URL as the LLM.
     pub fn from_env() -> Option<Self> {
-        let api_key = std::env::var("LLM_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .or_else(|_| std::env::var("LLM_API_KEY"))
             .ok()?;
 
         if api_key.trim().is_empty() {
             return None;
         }
 
-        let base_url = std::env::var("LLM_BASE_URL")
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .or_else(|_| std::env::var("LLM_BASE_URL"))
             .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
         Some(Self {
