@@ -188,7 +188,9 @@ impl TelegramBot {
 
                                     // Handle slash commands before forwarding to the agent.
                                     if let Some(text) = message.text.as_deref() {
-                                        if let Some(reply) = handle_command(text, &bot, message.chat.id).await {
+                                        if let Some(reply) =
+                                            handle_command(text, &bot, message.chat.id).await
+                                        {
                                             let _ = bot.send_html(message.chat.id, reply).await;
                                             continue;
                                         }

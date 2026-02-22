@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::reasoning::usage::UsageCounter;
 use crate::reasoning::llm_interface::{
     LlmChatRequest, LlmContentPart, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
 };
+use crate::reasoning::usage::UsageCounter;
 use crate::skills::SkillRegistry;
 use crate::soul::Soul;
 
@@ -50,7 +50,11 @@ impl Agent {
         let history = Self::load_history(&history_path);
         let msg_count = history.len();
         if msg_count > 0 {
-            println!("[Agent] Restored {} messages from {}", msg_count, history_path.display());
+            println!(
+                "[Agent] Restored {} messages from {}",
+                msg_count,
+                history_path.display()
+            );
         }
 
         Self {
@@ -70,7 +74,8 @@ impl Agent {
 
     /// Creates a focused subagent with a fixed system prompt (no Soul, no history carry-over).
     /// Runs up to 8 tool-call rounds — suited for deep research or multi-step delegated tasks.
-    pub fn subagent(        llm: Arc<dyn LlmInterface>,
+    pub fn subagent(
+        llm: Arc<dyn LlmInterface>,
         skills: SkillRegistry,
         system_prompt: String,
     ) -> Self {
@@ -85,7 +90,7 @@ impl Agent {
             max_history: 20,
             context_window_size: 128_000,
             history_path: None, // subagents don't persist
-            usage: None, // subagents don't track usage separately
+            usage: None,        // subagents don't track usage separately
         }
     }
 
@@ -102,12 +107,18 @@ impl Agent {
 
     /// Saves the current history to disk (fire-and-forget, logs errors).
     async fn save_history(&self) {
-        let Some(ref path) = self.history_path else { return };
+        let Some(ref path) = self.history_path else {
+            return;
+        };
         let history = self.history.lock().await;
         match serde_json::to_string(&*history) {
             Ok(json) => {
                 if let Err(err) = std::fs::write(path, json) {
-                    eprintln!("[Agent] Failed to write history to {}: {}", path.display(), err);
+                    eprintln!(
+                        "[Agent] Failed to write history to {}: {}",
+                        path.display(),
+                        err
+                    );
                 }
             }
             Err(err) => {
