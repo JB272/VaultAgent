@@ -4,6 +4,12 @@ VaultAgent is an open-source, self-hosted AI assistant written in Rust. It runs 
 
 If you are looking for a private AI Telegram bot, a personal AI assistant on your own infrastructure, or an OpenClaw-inspired Rust agent, VaultAgent is built for exactly that.
 
+## Demo
+
+<video src="assets/Short.mov" controls width="900"></video>
+
+If the embedded player does not render in your viewer, open the clip directly: [`assets/Short.mov`](assets/Short.mov).
+
 ## Why VaultAgent
 
 - **Self-hosted and private**: Your API keys stay on your machine
