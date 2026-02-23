@@ -126,6 +126,7 @@ bash setup.sh
 ```
 
 The script creates/updates:
+
 - `vaultagent/.env.secure`
 - `vaultagent/.env.docker`
 - optionally `vaultagent/trusted_chat_ids.md`
@@ -172,6 +173,7 @@ cargo run
 ```
 
 Allowlist options:
+
 - `TELEGRAM_ALLOWED_CHAT_IDS` in `vaultagent/.env.secure` (comma-separated)
 - optional `vaultagent/trusted_chat_ids.md` (one ID per line)
 

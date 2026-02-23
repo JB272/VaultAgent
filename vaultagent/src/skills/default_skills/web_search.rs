@@ -236,6 +236,8 @@ fn extract_html_results(html: &str, max_results: usize) -> Vec<Value> {
             }
         };
 
+        let normalized_url = normalize_result_url(&href);
+
         let gt_pos = match html[anchor_start..].find('>') {
             Some(v) => anchor_start + v + 1,
             None => break,
@@ -248,11 +250,11 @@ fn extract_html_results(html: &str, max_results: usize) -> Vec<Value> {
 
         let raw_title = &html[gt_pos..end_tag];
         let title = strip_html(raw_title);
-        if !title.is_empty() && !href.is_empty() {
+        if !title.is_empty() && !normalized_url.is_empty() {
             results.push(json!({
                 "type": "result",
                 "text": title,
-                "url": href,
+                "url": normalized_url,
             }));
         }
 
@@ -260,6 +262,38 @@ fn extract_html_results(html: &str, max_results: usize) -> Vec<Value> {
     }
 
     results
+}
+
+/// Converts DDG HTML result links into direct, absolute URLs when possible.
+///
+/// DuckDuckGo HTML often returns tracking redirect URLs like
+/// `//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com`.
+/// We decode `uddg` so downstream tools (web_fetch) can request the real page.
+fn normalize_result_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Handle scheme-relative URLs from DDG HTML (`//duckduckgo.com/...`).
+    let absolute = if trimmed.starts_with("//") {
+        format!("https:{}", trimmed)
+    } else {
+        trimmed.to_string()
+    };
+
+    if let Some(pos) = absolute.find("uddg=") {
+        let encoded = &absolute[pos + 5..];
+        let encoded = encoded.split('&').next().unwrap_or(encoded);
+        if let Ok(decoded) = urlencoding::decode(encoded) {
+            let decoded = decoded.trim().to_string();
+            if !decoded.is_empty() {
+                return decoded;
+            }
+        }
+    }
+
+    absolute
 }
 
 fn extract_attr_value(fragment: &str, attr: &str) -> Option<String> {
