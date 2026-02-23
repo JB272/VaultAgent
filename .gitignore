@@ -1,3 +1,4 @@
 vaultagent/target/
 vaultagent/.env*
+vaultagent/trusted_chat_ids.md
 agents.md

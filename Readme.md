@@ -1,4 +1,4 @@
-# VaultAgent — Self-Hosted AI Assistant for Telegram on Raspberry Pi (Rust)
+# VaultAgent — Self-Hosted AI Assistant for Telegram on Raspberry Pi or Remote Host (Rust)
 
 VaultAgent is an open-source, self-hosted AI assistant written in Rust. It runs on Raspberry Pi or any Linux server, connects to Telegram, keeps persistent memory, executes tools in a Docker sandbox, and supports scheduled automation.
 
@@ -18,7 +18,7 @@ If you are looking for a private AI Telegram bot, a personal AI assistant on you
 
 - **Sandboxed tool execution**: Skills run inside a Docker worker; secrets never enter the sandbox
 - **Telegram bot**: Polling mode and webhook mode
-- **OpenAI-compatible LLM integration**: Supports OpenAI-compatible providers and runtime model switching
+- **Multi-provider LLM integration**: Supports OpenAI-compatible providers and Anthropic, including runtime model switching
 - **Persistent chat history**: Conversation history is saved to disk and restored on restart
 - **Image input support**: Telegram photo messages are passed to the model as image content
 - **Voice message transcription**: Telegram voice memos are transcribed via Whisper-compatible endpoints
@@ -90,7 +90,7 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 
 ### Security properties
 
-- API keys (`LLM_API_KEY`, `TELEGRAM_BOT_TOKEN`) exist only on the host
+- API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`) exist only on the host
 - Worker is isolated and authenticated with `WORKER_TOKEN`
 - Container runs with reduced privileges and resource limits
 - Only mounted directories (`soul/`, `skills/`, `cron/`) are writable
@@ -102,10 +102,18 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 - Rust (edition 2024): https://rustup.rs/
 - Docker + Docker Compose
 - Telegram bot token via @BotFather
-- OpenAI-compatible API key
+- OpenAI-compatible API key or Anthropic API key
 - For deploy target: Linux aarch64 server (for example Raspberry Pi 3/4/5, 64-bit OS)
 
-### Setup
+### Quick start (simple)
+
+Run the guided installer script from repo root:
+
+```bash
+bash setup.sh
+```
+
+It creates/updates `.env.secure`, `.env.docker`, and optionally `trusted_chat_ids.md`.
 
 1. Clone the repository
 
@@ -121,16 +129,15 @@ cp vaultagent/.env.secure.example vaultagent/.env.secure
 cp vaultagent/.env.docker.example vaultagent/.env.docker
 ```
 
-- `.env.secure`: host-only secrets (`TELEGRAM_BOT_TOKEN`, `LLM_API_KEY`, `WORKER_TOKEN`)
-- `.env.docker`: worker config (`WORKER_TOKEN` must match)
+3. Open [vaultagent/.env.secure](vaultagent/.env.secure) and set:
 
-3. Configure allowed Telegram chat IDs
+- `TELEGRAM_BOT_TOKEN`
+- `LLM_PROVIDER` (`openai` or `anthropic`)
+- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
 
-Edit `vaultagent/trusted_chat_ids.md` and add one chat ID per line.
+4. Allow your Telegram chat ID
 
-4. Optional: customize assistant personality
-
-Edit `vaultagent/soul/personality.md`.
+Edit [vaultagent/trusted_chat_ids.md](vaultagent/trusted_chat_ids.md) and add one chat ID per line.
 
 5. Run locally
 
@@ -187,7 +194,7 @@ The bot handles these commands directly:
 | `/window`        | Show context window usage                   |
 | `/tools`         | List registered tools                       |
 | `/stats`         | Show today’s token usage                    |
-| `/models`        | Show available models and active model      |
+| `/models`        | Open model picker buttons (active model ✅) |
 | `/models <name>` | Switch model at runtime                     |
 | `/reboot`        | Restart service (systemd brings it back up) |
 
