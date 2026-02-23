@@ -105,9 +105,10 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 - OpenAI-compatible API key or Anthropic API key
 - For deploy target: Linux aarch64 server (for example Raspberry Pi 3/4/5, 64-bit OS)
 
-### Quick start (simple)
+### Standard installation (recommended)
 
-It creates/updates `.env.secure`, `.env.docker`, and optionally `trusted_chat_ids.md`.
+Use this default flow for production/self-hosted usage:
+`setup.sh` (guided config) -> `deploy.sh` (build + remote install + systemd).
 
 1. Clone the repository
 
@@ -116,46 +117,63 @@ git clone https://github.com/your-username/vaultagent.git
 cd vaultagent
 ```
 
-2. Create environment files
+2. Run guided setup
 
-Run the guided installer script from repo root:
+From repo root:
 
 ```bash
 bash setup.sh
 ```
 
-or:
+The script creates/updates:
+- `vaultagent/.env.secure`
+- `vaultagent/.env.docker`
+- optionally `vaultagent/trusted_chat_ids.md`
+
+3. Deploy to server/Raspberry Pi
+
+Quick deploy:
 
 ```bash
-cp vaultagent/.env.secure.example vaultagent/.env.secure
-cp vaultagent/.env.docker.example vaultagent/.env.docker
+./deploy.sh <host>
 ```
 
-Open [vaultagent/.env.secure](vaultagent/.env.secure) and set:
+Examples:
 
-- `TELEGRAM_BOT_TOKEN`
-- `LLM_PROVIDER` (`openai` or `anthropic`)
-- `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
+```bash
+./deploy.sh jarvis
+./deploy.sh 192.168.1.42
+DEPLOY_HOST=jarvis ./deploy.sh
+```
 
-4. Allow your Telegram chat ID
+After deploy, follow logs:
 
-Edit [vaultagent/trusted_chat_ids.md](vaultagent/trusted_chat_ids.md) and add one chat ID per line.
+```bash
+ssh user@server 'journalctl -u vaultagent -f'
+```
 
-5. Run locally
+### Run locally (optional)
 
-Start worker:
+If you want to run without remote deploy:
+
+1. Ensure env files exist (`bash setup.sh` is the easiest way).
+2. Start worker:
 
 ```bash
 cd vaultagent
 docker compose up -d
 ```
 
-Start host orchestrator:
+3. Start host orchestrator:
 
 ```bash
 export $(grep -v '^#' .env.secure | xargs)
 cargo run
 ```
+
+Allowlist options:
+- `TELEGRAM_ALLOWED_CHAT_IDS` in `vaultagent/.env.secure` (comma-separated)
+- optional `vaultagent/trusted_chat_ids.md` (one ID per line)
 
 ## Deploy to Raspberry Pi
 
