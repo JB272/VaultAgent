@@ -107,12 +107,6 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 
 ### Quick start (simple)
 
-Run the guided installer script from repo root:
-
-```bash
-bash setup.sh
-```
-
 It creates/updates `.env.secure`, `.env.docker`, and optionally `trusted_chat_ids.md`.
 
 1. Clone the repository
@@ -124,12 +118,20 @@ cd vaultagent
 
 2. Create environment files
 
+Run the guided installer script from repo root:
+
+```bash
+bash setup.sh
+```
+
+or:
+
 ```bash
 cp vaultagent/.env.secure.example vaultagent/.env.secure
 cp vaultagent/.env.docker.example vaultagent/.env.docker
 ```
 
-3. Open [vaultagent/.env.secure](vaultagent/.env.secure) and set:
+Open [vaultagent/.env.secure](vaultagent/.env.secure) and set:
 
 - `TELEGRAM_BOT_TOKEN`
 - `LLM_PROVIDER` (`openai` or `anthropic`)
