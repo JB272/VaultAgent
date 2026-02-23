@@ -12,7 +12,6 @@ If you are looking for a private AI Telegram bot, a personal AI assistant on you
 
 Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
-
 ## Why VaultAgent
 
 - **Self-hosted and private**: Your API keys stay on your machine
