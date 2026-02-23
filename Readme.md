@@ -6,7 +6,9 @@ If you are looking for a private AI Telegram bot, a personal AI assistant on you
 
 ## Demo
 
-[![VaultAgent Demo](assets/demo-thumbnail.png)](assets/short.mp4)
+<a href="assets/short.mp4">
+    <img src="assets/demo-thumbnail.png" alt="VaultAgent Demo" width="420" />
+</a>
 
 Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
