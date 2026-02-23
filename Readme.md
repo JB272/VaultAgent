@@ -6,9 +6,10 @@ If you are looking for a private AI Telegram bot, a personal AI assistant on you
 
 ## Demo
 
-<video src="assets/Short.mov" controls width="900"></video>
+[![VaultAgent Demo](assets/demo-thumbnail.png)](assets/short.mp4)
 
-If the embedded player does not render in your viewer, open the clip directly: [`assets/Short.mov`](assets/Short.mov).
+Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
+
 
 ## Why VaultAgent
 
