@@ -1,4 +1,4 @@
-# VaultAgent — Self-Hosted AI Assistant for Telegram on Raspberry Pi or Remote Host (Rust)
+# VaultAgent: Self-Hosted AI Assistant for Telegram on Raspberry Pi or Remote Host (Rust)
 
 VaultAgent is an open-source, self-hosted AI assistant written in Rust. It runs on Raspberry Pi or any Linux server, connects to Telegram, keeps persistent memory, executes tools in a Docker sandbox, and supports scheduled automation.
 
