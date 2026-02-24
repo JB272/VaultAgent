@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::reasoning::llm_interface::{
     LlmChatRequest, LlmContentPart, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
+    LlmToolChoice,
 };
 use crate::reasoning::usage::UsageCounter;
 use crate::skills::SkillRegistry;
@@ -34,6 +35,25 @@ pub struct Agent {
 }
 
 impl Agent {
+    fn has_web_capability(&self) -> bool {
+        self.skills
+            .skill_names()
+            .iter()
+            .any(|n| n == "research" || n == "web_search" || n == "web_fetch")
+    }
+
+    fn looks_like_no_internet_claim(text: &str) -> bool {
+        let t = text.to_lowercase();
+        t.contains("can't browse")
+            || t.contains("cannot browse")
+            || t.contains("can't access external websites")
+            || t.contains("do not have internet access")
+            || t.contains("i don't have internet access")
+            || t.contains("ich kann nicht im internet")
+            || t.contains("ich habe keinen zugriff auf das internet")
+            || t.contains("ich kann nicht auf externe websites zugreifen")
+    }
+
     /// Creates the main agent with a Soul (personality + memory).
     pub fn new(llm: Option<Arc<dyn LlmInterface>>, skills: SkillRegistry, soul: Arc<Soul>) -> Self {
         let context_window_size: u32 = std::env::var("LLM_CONTEXT_WINDOW")
@@ -246,9 +266,16 @@ impl Agent {
             messages.extend(history.clone());
         }
 
+        let mut forced_tool_retry = false;
+        let mut retried_after_no_web_claim = false;
+
         for _ in 0..self.max_rounds {
             let mut request = LlmChatRequest::new("", messages.clone());
             request.tools = self.skills.tool_definitions();
+            if forced_tool_retry {
+                request.tool_choice = Some(LlmToolChoice::Required);
+                forced_tool_retry = false;
+            }
 
             let response = match llm.chat(request).await {
                 Ok(value) => value,
@@ -269,6 +296,38 @@ impl Agent {
             // No tool calls → final response
             if response.tool_calls.is_empty() {
                 let content = response.content.trim();
+
+                // Safety net: if the model claims it cannot browse while web tools exist,
+                // give it one forced tool-call retry instead of returning the refusal.
+                if !retried_after_no_web_claim
+                    && self.has_web_capability()
+                    && Self::looks_like_no_internet_claim(content)
+                {
+                    retried_after_no_web_claim = true;
+                    forced_tool_retry = true;
+
+                    messages.push(LlmMessage {
+                        role: LlmRole::Assistant,
+                        content: LlmMessageContent::Text(response.content),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    });
+
+                    messages.push(LlmMessage {
+                        role: LlmRole::Developer,
+                        content: LlmMessageContent::Text(
+                            "You have web access through tools (research, web_search, web_fetch). Do not claim that you cannot browse the internet. Use the available tools now. If a tool fails, report the concrete error and continue with the best available result."
+                                .to_string(),
+                        ),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    });
+
+                    continue;
+                }
+
                 if content.is_empty() {
                     let fallback = response
                         .refusal
