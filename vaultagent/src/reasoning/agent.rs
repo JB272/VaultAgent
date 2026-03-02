@@ -464,6 +464,9 @@ impl Agent {
                 return "⏹ Stopped.".to_string();
             }
 
+            // Ensure dynamically created worker skills are visible to the model.
+            self.skills.refresh_remote_definitions().await;
+
             let mut request = LlmChatRequest::new("", messages.clone());
             request.tools = self.skills.tool_definitions();
             if forced_tool_retry {

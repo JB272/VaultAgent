@@ -15,8 +15,10 @@ use serde_json::Value;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::cron::CronStore;
+use crate::skills::Skill;
 use crate::skills::SkillRegistry;
 use crate::skills::default_skills::cron_add::CronAddSkill;
 use crate::skills::default_skills::cron_list::CronListSkill;
@@ -38,8 +40,33 @@ use crate::soul::Soul;
 
 #[derive(Clone)]
 struct WorkerState {
-    skills: Arc<SkillRegistry>,
+    skills: Arc<Mutex<SkillRegistry>>,
     token: String,
+    python_skills_dir: String,
+}
+
+async fn reload_python_skills_if_needed(state: &WorkerState) {
+    let loaded = load_python_skills(Path::new(&state.python_skills_dir)).await;
+    if loaded.is_empty() {
+        return;
+    }
+
+    let mut reg = state.skills.lock().await;
+    let existing = reg.skill_names();
+    let mut added = 0usize;
+
+    for skill in loaded {
+        let name = skill.definition().name;
+        if existing.iter().any(|n| n == &name) {
+            continue;
+        }
+        reg.add(skill);
+        added += 1;
+    }
+
+    if added > 0 {
+        println!("[Worker] Hot-loaded {} new Python skill(s)", added);
+    }
 }
 
 // ── Request / Response types ─────────────────────────────
@@ -92,8 +119,12 @@ async fn definitions(
     if !check_token(&headers, &state.token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let defs = state
-        .skills
+
+    // Refresh Python skills so newly created scripts are exposed immediately.
+    reload_python_skills_if_needed(&state).await;
+
+    let reg = state.skills.lock().await;
+    let defs = reg
         .tool_definitions()
         .into_iter()
         .map(|d| DefinitionEntry {
@@ -119,7 +150,22 @@ async fn execute(
         req.name, req.arguments
     );
 
-    match state.skills.execute(&req.name, &req.arguments).await {
+    // First attempt with current registry.
+    let first_try = {
+        let reg = state.skills.lock().await;
+        reg.execute(&req.name, &req.arguments).await
+    };
+
+    // If unknown, try hot-reloading Python skills once and retry.
+    let result = if first_try.is_none() {
+        reload_python_skills_if_needed(&state).await;
+        let reg = state.skills.lock().await;
+        reg.execute(&req.name, &req.arguments).await
+    } else {
+        first_try
+    };
+
+    match result {
         Some(result) => {
             // Log first 200 chars of result for debugging
             let preview: String = result.chars().take(200).collect();
@@ -224,8 +270,9 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
 
     // ── Start HTTP server ────────────────────────────────
     let state = WorkerState {
-        skills: Arc::new(skills),
+        skills: Arc::new(Mutex::new(skills)),
         token,
+        python_skills_dir,
     };
 
     let app = Router::new()

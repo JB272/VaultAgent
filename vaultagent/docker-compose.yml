@@ -23,10 +23,13 @@ services:
     # Do NOT override with user: here — sudo needs /etc/sudoers inside the image.
 
     # ── Volumes ───────────────────────────────────────
-    # Mount workspace directories into the container.
-    # The worker can read and write these freely.
+    # Isolated runtime workspace (Docker-managed volume).
+    # Files created/read by tools live only inside Docker, not on the host FS.
     volumes:
-      - ./:/workspace
+      - worker_workspace:/workspace
+      # Keep cron/soul shared with host so scheduler + memory stay in sync.
+      - ./cron:/host_cron
+      - ./soul:/host_soul
 
     # ── Environment ───────────────────────────────────
     env_file: .env.docker
@@ -46,3 +49,6 @@ services:
     # ── Resource limits ───────────────────────────────
     mem_limit: 512m
     pids_limit: 100
+
+volumes:
+  worker_workspace:

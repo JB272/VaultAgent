@@ -18,6 +18,7 @@ use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 use std::{collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
+use tokio::process::Command;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -51,6 +52,43 @@ impl TelegramBot {
         }
     }
 
+
+        async fn read_upload_bytes(
+            &self,
+            safe_path: &str,
+        ) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+            // First try local filesystem (works when host and worker share files).
+            if let Ok(bytes) = tokio::fs::read(safe_path).await {
+                return Ok(bytes);
+            }
+
+            // Fallback: fetch bytes from the running worker container.
+            // This keeps uploads working when /workspace is Docker-only.
+            let container = std::env::var("WORKER_CONTAINER_NAME")
+                .unwrap_or_else(|_| "vaultagent-worker".to_string());
+            let container_path = format!("/workspace/{}", safe_path);
+
+            let output = Command::new("docker")
+                .arg("exec")
+                .arg(&container)
+                .arg("cat")
+                .arg(&container_path)
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!(
+                    "Failed to read file from container {}:{} ({})",
+                    container,
+                    container_path,
+                    stderr.trim()
+                )
+                .into());
+            }
+
+            Ok(output.stdout)
+        }
     pub fn is_enabled() -> bool {
         is_token_service_enabled("TELEGRAM_BOT_TOKEN")
     }
@@ -503,7 +541,7 @@ impl TelegramBot {
         caption: Option<&str>,
     ) -> Result<Message, Box<dyn Error + Send + Sync>> {
         let safe_path = sanitize_relative_path(relative_path)?;
-        let bytes = tokio::fs::read(&safe_path).await?;
+        let bytes = self.read_upload_bytes(&safe_path).await?;
         let filename = Path::new(&safe_path)
             .file_name()
             .and_then(|n| n.to_str())

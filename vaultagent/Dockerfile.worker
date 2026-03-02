@@ -18,6 +18,10 @@ RUN useradd --uid 1000 --create-home --shell /bin/bash worker \
 COPY vaultagent /usr/local/bin/vaultagent
 RUN chmod +x /usr/local/bin/vaultagent
 
+# Seed workspace defaults (copied into the named volume on first run).
+COPY skills /workspace/skills
+RUN mkdir -p /workspace/uploads
+
 WORKDIR /workspace
 USER worker
 

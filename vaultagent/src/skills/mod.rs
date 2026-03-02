@@ -25,7 +25,7 @@ pub struct RemoteSkillProxy {
     client: reqwest::Client,
     base_url: String,
     token: String,
-    definitions: std::sync::Arc<Vec<LlmToolDefinition>>,
+    definitions: std::sync::Arc<std::sync::RwLock<Vec<LlmToolDefinition>>>,
 }
 
 impl RemoteSkillProxy {
@@ -66,7 +66,7 @@ impl RemoteSkillProxy {
                         client,
                         base_url: base_url.to_string(),
                         token: token.to_string(),
-                        definitions: std::sync::Arc::new(definitions),
+                        definitions: std::sync::Arc::new(std::sync::RwLock::new(definitions)),
                     });
                 }
                 Ok(resp) => {
@@ -93,12 +93,64 @@ impl RemoteSkillProxy {
         .into())
     }
 
+    /// Refreshes tool definitions from the worker at runtime.
+    /// Keeps the previous cache if the fetch fails.
+    pub async fn refresh_definitions(&self) -> Result<(), String> {
+        #[derive(serde::Deserialize)]
+        struct Def {
+            name: String,
+            description: Option<String>,
+            parameters_schema: Value,
+        }
+
+        let response = self
+            .client
+            .get(format!("{}/definitions", self.base_url))
+            .header("x-worker-token", &self.token)
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| format!("request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("HTTP {}", response.status()));
+        }
+
+        let defs: Vec<Def> = response
+            .json()
+            .await
+            .map_err(|e| format!("invalid definitions payload: {}", e))?;
+
+        let mapped: Vec<LlmToolDefinition> = defs
+            .into_iter()
+            .map(|d| LlmToolDefinition {
+                name: d.name,
+                description: d.description,
+                parameters_schema: d.parameters_schema,
+            })
+            .collect();
+
+        match self.definitions.write() {
+            Ok(mut lock) => {
+                *lock = mapped;
+                Ok(())
+            }
+            Err(_) => Err("definitions lock poisoned".to_string()),
+        }
+    }
+
     pub fn tool_definitions(&self) -> Vec<LlmToolDefinition> {
-        self.definitions.as_ref().clone()
+        self.definitions
+            .read()
+            .map(|v| v.clone())
+            .unwrap_or_default()
     }
 
     pub fn skill_names(&self) -> Vec<String> {
-        self.definitions.iter().map(|d| d.name.clone()).collect()
+        self.definitions
+            .read()
+            .map(|defs| defs.iter().map(|d| d.name.clone()).collect())
+            .unwrap_or_default()
     }
 
     pub async fn execute(&self, name: &str, arguments: &Value) -> Option<String> {
@@ -186,6 +238,15 @@ impl SkillRegistry {
             defs.extend(remote.tool_definitions());
         }
         defs
+    }
+
+    /// Refreshes remote tool definitions if a remote worker is configured.
+    pub async fn refresh_remote_definitions(&self) {
+        if let Some(ref remote) = self.remote {
+            if let Err(err) = remote.refresh_definitions().await {
+                eprintln!("[Sandbox] Failed to refresh tool definitions: {}", err);
+            }
+        }
     }
 
     /// Returns the names of all registered skills.
