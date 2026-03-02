@@ -613,24 +613,18 @@ enum CommandResult {
 }
 
 /// Keeps only chat-relevant models for display in the picker.
-fn filter_models_for_display(models: Vec<String>, provider: &str) -> Vec<String> {
-    if provider == "anthropic" {
-        let mut v: Vec<String> = models
-            .into_iter()
-            .filter(|m| m.starts_with("claude"))
-            .collect();
-        v.sort();
-        v
-    } else {
-        // OpenAI-compatible: skip embeddings, TTS, image-gen, fine-tunes, etc.
-        let prefixes = ["gpt-4", "gpt-3.5-turbo", "o1", "o3", "chatgpt-4o"];
-        let mut v: Vec<String> = models
-            .into_iter()
-            .filter(|m| prefixes.iter().any(|p| m.starts_with(p)))
-            .collect();
-        v.sort();
-        v
-    }
+/// Works for mixed lists (MultiProvider aggregates all backends).
+fn filter_models_for_display(models: Vec<String>, _provider: &str) -> Vec<String> {
+    let chat_prefixes = [
+        "gpt-4", "gpt-3.5-turbo", "o1", "o3", "o4", "chatgpt-4o",
+        "claude",
+    ];
+    let mut v: Vec<String> = models
+        .into_iter()
+        .filter(|m| chat_prefixes.iter().any(|p| m.starts_with(p)))
+        .collect();
+    v.sort();
+    v
 }
 
 fn build_model_keyboard(models: &[String], current: &str) -> InlineKeyboardMarkup {

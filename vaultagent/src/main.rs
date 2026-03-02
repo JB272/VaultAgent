@@ -12,6 +12,7 @@ use gateway::com::website::setup_website;
 use gateway::incoming_actions_queue::{IncomingAction, IncomingActionQueue};
 use reasoning::agent::Agent;
 use reasoning::llm_apis::anthropic::AnthropicClient;
+use reasoning::llm_apis::multi_provider::MultiProvider;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
@@ -112,35 +113,44 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cron_store = Arc::new(CronStore::load(Path::new(&cron_dir)));
 
     // ── LLM ─────────────────────────────────────────────
-    // Select provider via LLM_PROVIDER env var.
-    // Supported values: "anthropic", "openai" (default).
-    // Falls back to OpenAI-compatible if LLM_PROVIDER is unset or unrecognised.
-    let provider = std::env::var("LLM_PROVIDER")
+    // Try to initialise all available providers.
+    // LLM_PROVIDER ("anthropic" | "openai") selects the *default* backend;
+    // the others are still available and switchable via /models.
+    let preferred = std::env::var("LLM_PROVIDER")
         .unwrap_or_default()
         .to_lowercase();
 
-    let llm: Option<std::sync::Arc<dyn LlmInterface>> = if provider == "anthropic" {
-        match AnthropicClient::from_env() {
-            Ok(client) => {
-                println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-                Some(std::sync::Arc::new(client))
-            }
-            Err(err) => {
-                eprintln!("[Main][LLM] Disabled: {}", err);
-                None
-            }
+    let mut backends: Vec<Arc<dyn LlmInterface>> = Vec::new();
+
+    let openai_result = OpenAiCompatibleClient::from_env();
+    let anthropic_result = AnthropicClient::from_env();
+
+    // Insert preferred provider first so it becomes index 0 (= default).
+    if preferred == "anthropic" {
+        if let Ok(client) = anthropic_result {
+            println!("[Main][LLM] Enabled provider: {} (default)", client.provider_name());
+            backends.push(Arc::new(client));
+        }
+        if let Ok(client) = openai_result {
+            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+            backends.push(Arc::new(client));
         }
     } else {
-        match OpenAiCompatibleClient::from_env() {
-            Ok(client) => {
-                println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-                Some(std::sync::Arc::new(client))
-            }
-            Err(err) => {
-                eprintln!("[Main][LLM] Disabled: {}", err);
-                None
-            }
+        if let Ok(client) = openai_result {
+            println!("[Main][LLM] Enabled provider: {} (default)", client.provider_name());
+            backends.push(Arc::new(client));
         }
+        if let Ok(client) = anthropic_result {
+            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+            backends.push(Arc::new(client));
+        }
+    }
+
+    let llm: Option<Arc<dyn LlmInterface>> = if backends.is_empty() {
+        eprintln!("[Main][LLM] No LLM providers configured.");
+        None
+    } else {
+        Some(Arc::new(MultiProvider::new(backends)))
     };
 
     // ── Skills (always via Docker sandbox worker) ───────

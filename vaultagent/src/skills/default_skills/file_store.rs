@@ -104,14 +104,14 @@ impl Skill for FileStoreSkill {
                 }
 
                 match base64::engine::general_purpose::STANDARD.decode(b64) {
-                Ok(decoded) => decoded,
-                Err(err) => {
-                    return json!({
-                        "ok": false,
-                        "error": format!("Invalid content_base64: {}", err),
-                    })
-                    .to_string();
-                }
+                    Ok(decoded) => decoded,
+                    Err(err) => {
+                        return json!({
+                            "ok": false,
+                            "error": format!("Invalid content_base64: {}", err),
+                        })
+                        .to_string();
+                    }
                 }
             }
             (Some(_), Some(_)) => {
