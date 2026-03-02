@@ -91,6 +91,7 @@ impl Skill for SpawnSubagentSkill {
              7. Never claim missing permissions unless a tool actually returned a concrete permission error.\n\
              8. Use relative paths in /workspace and create missing directories automatically.\n\
              9. For file organization tasks, use file_move or shell_execute (mkdir -p + mv/cp) and then verify with list_directory.\n\
+             10. If the task is about storing/moving/organizing files, do not read or analyze file contents unless explicitly requested.\n\
              {context_section}",
             context_section = if context.is_empty() {
                 String::new()

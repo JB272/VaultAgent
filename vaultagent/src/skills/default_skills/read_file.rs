@@ -13,7 +13,10 @@ impl Skill for ReadFileSkill {
         LlmToolDefinition {
             name: "read_file".to_string(),
             description: Some(
-                "Reads a text file from a relative path in the workspace.".to_string(),
+                "Reads a text file from a relative path in the workspace. \
+                 Use only when the user explicitly asks to inspect, summarize, or analyze file content. \
+                 Do not use this for pure file organization tasks (move/store/rename)."
+                    .to_string(),
             ),
             parameters_schema: json!({
                 "type": "object",

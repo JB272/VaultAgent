@@ -12,7 +12,12 @@ impl Skill for ExtractPdfSkill {
     fn definition(&self) -> LlmToolDefinition {
         LlmToolDefinition {
             name: "extract_pdf".to_string(),
-            description: Some("Extracts plain text from a PDF file in the workspace.".to_string()),
+            description: Some(
+                "Extracts plain text from a PDF file in the workspace. \
+                 Use only when the user explicitly asks to read/analyze PDF content. \
+                 Do not use for pure file organization tasks."
+                    .to_string(),
+            ),
             parameters_schema: json!({
                 "type": "object",
                 "properties": {
