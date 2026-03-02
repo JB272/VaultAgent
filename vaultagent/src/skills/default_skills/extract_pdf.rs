@@ -12,9 +12,7 @@ impl Skill for ExtractPdfSkill {
     fn definition(&self) -> LlmToolDefinition {
         LlmToolDefinition {
             name: "extract_pdf".to_string(),
-            description: Some(
-                "Extracts plain text from a PDF file in the workspace.".to_string(),
-            ),
+            description: Some("Extracts plain text from a PDF file in the workspace.".to_string()),
             parameters_schema: json!({
                 "type": "object",
                 "properties": {
@@ -66,7 +64,11 @@ impl Skill for ExtractPdfSkill {
         let bytes = match tokio::fs::read(&safe_path).await {
             Ok(data) => data,
             Err(err) => {
-                eprintln!("[ExtractPdf] ERROR reading '{}': {}", safe_path.display(), err);
+                eprintln!(
+                    "[ExtractPdf] ERROR reading '{}': {}",
+                    safe_path.display(),
+                    err
+                );
                 return json!({
                     "ok": false,
                     "error": format!("Failed to read PDF: {}", err),
@@ -75,7 +77,8 @@ impl Skill for ExtractPdfSkill {
             }
         };
 
-        let parse_result = tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&bytes)).await;
+        let parse_result =
+            tokio::task::spawn_blocking(move || pdf_extract::extract_text_from_mem(&bytes)).await;
 
         let text = match parse_result {
             Ok(Ok(text)) => text,
