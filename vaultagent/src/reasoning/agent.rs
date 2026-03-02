@@ -318,7 +318,10 @@ impl Agent {
                 }
             }
             Err(err) => {
-                eprintln!("[Agent] Summarization failed: {} — falling back to simple trim", err);
+                eprintln!(
+                    "[Agent] Summarization failed: {} — falling back to simple trim",
+                    err
+                );
                 let mut history = self.history.lock().await;
                 let split = history.len().saturating_sub(KEEP_RECENT);
                 history.drain(0..split);

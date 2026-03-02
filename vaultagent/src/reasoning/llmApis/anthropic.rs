@@ -217,7 +217,10 @@ impl AnthropicClient {
     fn max_output_tokens(model: &str) -> u32 {
         // Claude 3.5+ and Claude 4+ support 8192 output tokens.
         // Older Claude 3 models (haiku, sonnet, opus) are limited to 4096.
-        if model.contains("3-5") || model.contains("claude-sonnet-4") || model.contains("claude-opus-4") {
+        if model.contains("3-5")
+            || model.contains("claude-sonnet-4")
+            || model.contains("claude-opus-4")
+        {
             8192
         } else {
             4096
@@ -241,7 +244,10 @@ impl LlmInterface for AnthropicClient {
         payload.insert("messages".to_string(), Value::Array(messages));
         // max_tokens is required by Anthropic's API — cap to model's limit.
         let model_max = Self::max_output_tokens(&model);
-        let max_tokens = request.max_tokens.map(|m| m.min(model_max)).unwrap_or(model_max);
+        let max_tokens = request
+            .max_tokens
+            .map(|m| m.min(model_max))
+            .unwrap_or(model_max);
         payload.insert("max_tokens".to_string(), json!(max_tokens));
 
         if let Some(system) = system_prompt {
