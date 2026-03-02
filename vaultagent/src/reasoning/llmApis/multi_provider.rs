@@ -34,7 +34,7 @@ impl MultiProvider {
             if prov == "anthropic" && model.starts_with("claude") {
                 return Some(i);
             }
-            if prov == "openai" && !model.starts_with("claude") {
+            if prov.starts_with("openai") && !model.starts_with("claude") {
                 return Some(i);
             }
         }
