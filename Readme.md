@@ -26,6 +26,7 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
 - **Sandboxed tool execution**: Skills run inside a Docker worker; secrets never enter the sandbox
 - **Telegram bot**: Polling mode and webhook mode
+- **Telegram file uploads**: Receives document uploads (for example PDF/ZIP/TXT), stores them for downstream tool/Python processing
 - **Multi-provider LLM integration**: Supports OpenAI-compatible providers and Anthropic, including runtime model switching
 - **Persistent chat history**: Conversation history is saved to disk and restored on restart
 - **Image input support**: Telegram photo messages are passed to the model as image content
@@ -38,7 +39,7 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
 ### Built-in tools
 
-- File tools: `read_file`, `write_file`, `list_directory`
+- File tools: `read_file`, `write_file`, `file_store`, `list_directory`
 - Web tools: `web_search`, `web_fetch`, `research`
 - Memory tools: `memory_save`, `memory_search`
 - Automation tools: `cron_add`, `cron_list`, `cron_remove`

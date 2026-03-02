@@ -21,6 +21,7 @@ use crate::skills::SkillRegistry;
 use crate::skills::default_skills::cron_add::CronAddSkill;
 use crate::skills::default_skills::cron_list::CronListSkill;
 use crate::skills::default_skills::cron_remove::CronRemoveSkill;
+use crate::skills::default_skills::file_store::FileStoreSkill;
 use crate::skills::default_skills::list_directory::ListDirectorySkill;
 use crate::skills::default_skills::memory_save::MemorySaveSkill;
 use crate::skills::default_skills::memory_search::MemorySearchSkill;
@@ -183,6 +184,7 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
     // File skills
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+    skills.add(FileStoreSkill);
     skills.add(ListDirectorySkill);
 
     // Shell execution

@@ -836,7 +836,95 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
         }
     }
 
-    // 2) Regular text message
+    // 2) Generic document/file upload (PDF, ZIP, TXT, etc.)
+    if let Some(ref document) = message.document {
+        let user_text = message
+            .caption
+            .clone()
+            .unwrap_or_else(|| "[File upload]".to_string());
+
+        match bot.get_file_path(&document.file_id).await {
+            Ok(file_path) => match bot.download_file(&file_path).await {
+                Ok(data) => {
+                    let stored_path = persist_telegram_file(
+                        &data,
+                        document.file_name.as_deref(),
+                        &document.file_id,
+                    )
+                    .await;
+
+                    match stored_path {
+                        Ok(path) => {
+                            println!(
+                                "[Telegram][Document] Saved '{}' ({} bytes) to {}",
+                                document
+                                    .file_name
+                                    .as_deref()
+                                    .unwrap_or("unnamed file"),
+                                data.len(),
+                                path
+                            );
+
+                            let metadata = format!(
+                                "[File upload]\n- name: {}\n- mime: {}\n- size: {}\n- saved_path: {}\n\n{}\n\nUse the saved_path with tools like read_file, shell_execute, file_store, or Python skills.",
+                                document
+                                    .file_name
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                document
+                                    .mime_type
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                document
+                                    .file_size
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| data.len().to_string()),
+                                path,
+                                user_text
+                            );
+
+                            return Some(ExtractedContent {
+                                text: metadata,
+                                image_url: None,
+                            });
+                        }
+                        Err(err) => {
+                            eprintln!("[Telegram][Document] Failed to store file: {}", err);
+                            return Some(ExtractedContent {
+                                text: format!(
+                                    "[File upload]\nCould not store the uploaded file: {}\n\n{}",
+                                    err, user_text
+                                ),
+                                image_url: None,
+                            });
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("[Telegram][Document] Failed to download: {}", err);
+                    return Some(ExtractedContent {
+                        text: format!(
+                            "[File upload]\nCould not download the uploaded file: {}\n\n{}",
+                            err, user_text
+                        ),
+                        image_url: None,
+                    });
+                }
+            },
+            Err(err) => {
+                eprintln!("[Telegram][Document] Failed to get file path: {}", err);
+                return Some(ExtractedContent {
+                    text: format!(
+                        "[File upload]\nCould not resolve the uploaded file path: {}\n\n{}",
+                        err, user_text
+                    ),
+                    image_url: None,
+                });
+            }
+        }
+    }
+
+    // 3) Regular text message
     if let Some(ref text) = message.text {
         return Some(ExtractedContent {
             text: text.clone(),
@@ -844,7 +932,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
         });
     }
 
-    // 3) Voice memo or audio file → transcribe
+    // 4) Voice memo or audio file → transcribe
     let audio_info = message.voice.as_ref().or(message.audio.as_ref())?;
     let transcription_service = bot.transcription.as_ref()?;
 
@@ -889,6 +977,46 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
             None
         }
     }
+}
+
+async fn persist_telegram_file(
+    bytes: &[u8],
+    original_name: Option<&str>,
+    file_id: &str,
+) -> Result<String, String> {
+    let uploads_dir = std::path::Path::new("skills").join("uploads");
+
+    tokio::fs::create_dir_all(&uploads_dir)
+        .await
+        .map_err(|e| format!("Failed to create uploads directory: {}", e))?;
+
+    let safe_name = original_name
+        .map(sanitize_filename)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| format!("file_{}.bin", sanitize_filename(file_id)));
+
+    let unique = uuid::Uuid::new_v4().to_string();
+    let stored_name = format!("{}_{}", unique, safe_name);
+    let file_path = uploads_dir.join(stored_name);
+
+    tokio::fs::write(&file_path, bytes)
+        .await
+        .map_err(|e| format!("Failed to write uploaded file: {}", e))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+fn sanitize_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -1020,6 +1148,7 @@ pub struct Message {
     pub chat: Chat,
     pub voice: Option<Audio>,
     pub audio: Option<Audio>,
+    pub document: Option<Document>,
     /// Array of available photo sizes (smallest → largest).
     pub photo: Option<Vec<PhotoSize>>,
 }
@@ -1039,6 +1168,15 @@ pub struct Audio {
     pub duration: Option<u64>,
     #[serde(default)]
     pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Document {
+    pub file_id: String,
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

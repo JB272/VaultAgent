@@ -1,6 +1,7 @@
 pub mod cron_add;
 pub mod cron_list;
 pub mod cron_remove;
+pub mod file_store;
 pub mod http_utils;
 pub mod list_directory;
 pub mod memory_save;
