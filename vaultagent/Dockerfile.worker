@@ -21,6 +21,7 @@ RUN chmod +x /usr/local/bin/vaultagent
 # Seed workspace defaults (copied into the named volume on first run).
 COPY skills /workspace/skills
 RUN mkdir -p /workspace/uploads
+RUN chown -R worker:worker /workspace
 
 WORKDIR /workspace
 USER worker

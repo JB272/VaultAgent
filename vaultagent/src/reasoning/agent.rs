@@ -85,6 +85,32 @@ impl Agent {
             || t.contains("can't install")
     }
 
+    /// Accepts NO_REPLY even if the model adds surrounding text accidentally.
+    fn is_no_reply_signal(text: &str) -> bool {
+        let trimmed = text.trim();
+        if trimmed.eq_ignore_ascii_case("NO_REPLY") || trimmed.eq_ignore_ascii_case("[NO_REPLY]") {
+            return true;
+        }
+
+        // Common failure mode: model appends NO_REPLY after a sentence.
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.ends_with(" NO_REPLY") || upper.ends_with(" [NO_REPLY]") {
+            return true;
+        }
+
+        // Also accept a line that only contains NO_REPLY (plus punctuation).
+        for line in upper.lines() {
+            let cleaned = line
+                .trim()
+                .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_ascii_whitespace());
+            if cleaned == "NO_REPLY" {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Creates the main agent with a Soul (personality + memory).
     pub fn new(llm: Option<Arc<dyn LlmInterface>>, skills: SkillRegistry, soul: Arc<Soul>) -> Self {
         let context_window_size: u32 = std::env::var("LLM_CONTEXT_WINDOW")
@@ -501,7 +527,7 @@ impl Agent {
                 // NO_REPLY: the model signals it wants to continue thinking
                 // without sending anything to the user. Add to messages and
                 // loop so it can issue more tool calls or produce a real reply.
-                if content == "NO_REPLY" || content == "[NO_REPLY]" {
+                if Self::is_no_reply_signal(content) {
                     messages.push(LlmMessage {
                         role: LlmRole::Assistant,
                         content: LlmMessageContent::Text(content.to_string()),
