@@ -106,7 +106,7 @@ impl Agent {
             custom_system_prompt: Some(system_prompt),
             history: Mutex::new(Vec::new()),
             last_prompt_tokens: Mutex::new(0),
-            max_rounds: 8,
+            max_rounds: 15,
             max_history: 20,
             context_window_size: 128_000,
             history_path: None, // subagents don't persist
@@ -247,7 +247,7 @@ impl Agent {
             let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
             format!(
-                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.",
+                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.",
                 base_prompt, chat_id, user_tz, now_utc, user_tz
             )
         };
@@ -293,9 +293,23 @@ impl Agent {
                 }
             }
 
-            // No tool calls → final response
+            // No tool calls → check for NO_REPLY or final response
             if response.tool_calls.is_empty() {
                 let content = response.content.trim();
+
+                // NO_REPLY: the model signals it wants to continue thinking
+                // without sending anything to the user. Add to messages and
+                // loop so it can issue more tool calls or produce a real reply.
+                if content == "NO_REPLY" || content == "[NO_REPLY]" {
+                    messages.push(LlmMessage {
+                        role: LlmRole::Assistant,
+                        content: LlmMessageContent::Text(content.to_string()),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    });
+                    continue;
+                }
 
                 // Safety net: if the model claims it cannot browse while web tools exist,
                 // give it one forced tool-call retry instead of returning the refusal.

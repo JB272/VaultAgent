@@ -16,6 +16,7 @@ use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
 use skills::default_skills::research::ResearchSkill;
+use skills::default_skills::spawn_subagent::SpawnSubagentSkill;
 use soul::Soul;
 use std::error::Error;
 use std::path::Path;
@@ -99,7 +100,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // `research` stays host-side because it orchestrates via the LLM.
     // Its sub-skills (web_search, web_fetch) are routed through the worker.
     if let Some(ref llm_arc) = llm {
-        skills.add(ResearchSkill::new(Arc::clone(llm_arc)).with_remote(remote));
+        skills.add(ResearchSkill::new(Arc::clone(llm_arc)).with_remote(remote.clone()));
+        skills.add(SpawnSubagentSkill::new(Arc::clone(llm_arc)).with_remote(remote));
     }
 
     // ── Agent ───────────────────────────────────────────

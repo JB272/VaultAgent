@@ -10,6 +10,7 @@ pub mod memory_search;
 pub mod read_file;
 pub mod research;
 pub mod shell_execute;
+pub mod spawn_subagent;
 pub mod web_fetch;
 pub mod web_search;
 pub mod write_file;
