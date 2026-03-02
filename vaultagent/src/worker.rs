@@ -21,6 +21,7 @@ use crate::skills::SkillRegistry;
 use crate::skills::default_skills::cron_add::CronAddSkill;
 use crate::skills::default_skills::cron_list::CronListSkill;
 use crate::skills::default_skills::cron_remove::CronRemoveSkill;
+use crate::skills::default_skills::extract_pdf::ExtractPdfSkill;
 use crate::skills::default_skills::file_store::FileStoreSkill;
 use crate::skills::default_skills::list_directory::ListDirectorySkill;
 use crate::skills::default_skills::memory_save::MemorySaveSkill;
@@ -113,7 +114,10 @@ async fn execute(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    println!("[Worker] Executing skill: {} | args: {}", req.name, req.arguments);
+    println!(
+        "[Worker] Executing skill: {} | args: {}",
+        req.name, req.arguments
+    );
 
     match state.skills.execute(&req.name, &req.arguments).await {
         Some(result) => {
@@ -152,8 +156,13 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
         .unwrap_or(9100);
 
     // ── Startup diagnostics ───────────────────────────────
-    println!("[Worker] PID: {}, UID: {}", std::process::id(), unsafe { libc::getuid() });
-    println!("[Worker] CWD: {:?}", std::env::current_dir().unwrap_or_default());
+    println!("[Worker] PID: {}, UID: {}", std::process::id(), unsafe {
+        libc::getuid()
+    });
+    println!(
+        "[Worker] CWD: {:?}",
+        std::env::current_dir().unwrap_or_default()
+    );
 
     // ── Load Soul (for memory skills) ────────────────────
     let soul_dir = std::env::var("SOUL_DIR").unwrap_or_else(|_| "soul".to_string());
@@ -184,6 +193,7 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
     // File skills
     skills.add(ReadFileSkill);
     skills.add(WriteFileSkill);
+    skills.add(ExtractPdfSkill);
     skills.add(FileStoreSkill);
     skills.add(ListDirectorySkill);
 

@@ -24,3 +24,4 @@ urlencoding = "2"
 dotenvy = "0.15"
 futures-util = "0.3.31"
 uuid = { version = "1", features = ["v4"] }
+pdf-extract = "0.7"

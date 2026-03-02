@@ -857,10 +857,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                         Ok(path) => {
                             println!(
                                 "[Telegram][Document] Saved '{}' ({} bytes) to {}",
-                                document
-                                    .file_name
-                                    .as_deref()
-                                    .unwrap_or("unnamed file"),
+                                document.file_name.as_deref().unwrap_or("unnamed file"),
                                 data.len(),
                                 path
                             );
