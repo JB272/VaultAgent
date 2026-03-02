@@ -55,21 +55,36 @@ impl Skill for FileCopySkill {
     }
 
     async fn execute(&self, arguments: &Value) -> String {
-        let source = arguments.get("source").and_then(Value::as_str).unwrap_or_default();
-        let destination = arguments.get("destination").and_then(Value::as_str).unwrap_or_default();
-        let do_move = arguments.get("move").and_then(Value::as_bool).unwrap_or(false);
+        let source = arguments
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let destination = arguments
+            .get("destination")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let do_move = arguments
+            .get("move")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let safe_src = match sanitize_relative_path(source) {
             Ok(p) => p,
-            Err(e) => return json!({"ok": false, "error": format!("Invalid source: {}", e)}).to_string(),
+            Err(e) => {
+                return json!({"ok": false, "error": format!("Invalid source: {}", e)}).to_string();
+            }
         };
         let safe_dst = match sanitize_relative_path(destination) {
             Ok(p) => p,
-            Err(e) => return json!({"ok": false, "error": format!("Invalid destination: {}", e)}).to_string(),
+            Err(e) => {
+                return json!({"ok": false, "error": format!("Invalid destination: {}", e)})
+                    .to_string();
+            }
         };
 
         if !safe_src.exists() {
-            return json!({"ok": false, "error": format!("Source file not found: {}", source)}).to_string();
+            return json!({"ok": false, "error": format!("Source file not found: {}", source)})
+                .to_string();
         }
 
         // Create parent directories for destination.
@@ -85,7 +100,8 @@ impl Skill for FileCopySkill {
             // Try rename first (same filesystem), fall back to copy+delete.
             if tokio::fs::rename(&safe_src, &safe_dst).await.is_err() {
                 if let Err(e) = tokio::fs::copy(&safe_src, &safe_dst).await {
-                    return json!({"ok": false, "error": format!("Failed to move file: {}", e)}).to_string();
+                    return json!({"ok": false, "error": format!("Failed to move file: {}", e)})
+                        .to_string();
                 }
                 let _ = tokio::fs::remove_file(&safe_src).await;
             }

@@ -17,7 +17,7 @@ use reqwest::Client;
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
-use std::{collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -206,6 +206,12 @@ impl TelegramBot {
             let bot = self.clone();
             tokio::spawn(async move {
                 let mut offset: Option<i64> = None;
+                // Pending media-group messages: group_id → (chat_id, vec of contents, user caption)
+                let mut pending_groups: HashMap<String, (i64, Vec<String>, Option<String>)> =
+                    HashMap::new();
+                // When we first saw a media group — used for flush timeout.
+                let mut group_first_seen: HashMap<String, tokio::time::Instant> = HashMap::new();
+
                 loop {
                     match bot.get_updates(offset, Some(30)).await {
                         Ok(updates) => {
@@ -255,6 +261,31 @@ impl TelegramBot {
                                         }
                                     }
 
+                                    // If this message belongs to a media group, collect it.
+                                    if let Some(ref group_id) = message.media_group_id {
+                                        if let Some(content) = extract_content(&bot, message).await
+                                        {
+                                            let entry = pending_groups
+                                                .entry(group_id.clone())
+                                                .or_insert_with(|| {
+                                                    (message.chat.id, Vec::new(), None)
+                                                });
+                                            entry.1.push(content.text);
+                                            // Capture user caption from the first message that has one.
+                                            if entry.2.is_none() {
+                                                if let Some(ref cap) = message.caption {
+                                                    if cap != "[File upload]" {
+                                                        entry.2 = Some(cap.clone());
+                                                    }
+                                                }
+                                            }
+                                            group_first_seen
+                                                .entry(group_id.clone())
+                                                .or_insert_with(tokio::time::Instant::now);
+                                        }
+                                        continue;
+                                    }
+
                                     if let Some(content) = extract_content(&bot, message).await {
                                         let action = IncomingAction::Chat(ChatAction {
                                             chat_id: message.chat.id,
@@ -263,6 +294,36 @@ impl TelegramBot {
                                         });
                                         incoming_writer.push(action).await;
                                     }
+                                }
+                            }
+
+                            // Flush media groups older than 1.5 seconds.
+                            let now = tokio::time::Instant::now();
+                            let ready_groups: Vec<String> = group_first_seen
+                                .iter()
+                                .filter(|(_, seen)| now.duration_since(**seen).as_millis() > 1500)
+                                .map(|(id, _)| id.clone())
+                                .collect();
+
+                            for group_id in ready_groups {
+                                group_first_seen.remove(&group_id);
+                                if let Some((chat_id, parts, caption)) =
+                                    pending_groups.remove(&group_id)
+                                {
+                                    let combined = format!(
+                                        "[Batch upload: {} files]\n\n{}{}\n\nAll files are already saved on disk. Use file_copy to move them to a target folder. Do NOT re-create file content with file_store.",
+                                        parts.len(),
+                                        parts.join("\n---\n"),
+                                        caption
+                                            .map(|c| format!("\n\nUser message: {}", c))
+                                            .unwrap_or_default()
+                                    );
+                                    let action = IncomingAction::Chat(ChatAction {
+                                        chat_id,
+                                        text: combined,
+                                        image_url: None,
+                                    });
+                                    incoming_writer.push(action).await;
                                 }
                             }
                         }
@@ -1118,8 +1179,8 @@ async fn persist_telegram_file(
     let stored_name = format!("{}_{}", unique, safe_name);
     let relative_path = format!("skills/uploads/{}", stored_name);
 
-    let container = std::env::var("WORKER_CONTAINER_NAME")
-        .unwrap_or_else(|_| "vaultagent-worker".to_string());
+    let container =
+        std::env::var("WORKER_CONTAINER_NAME").unwrap_or_else(|_| "vaultagent-worker".to_string());
     let container_path = format!("/workspace/{}", relative_path);
 
     // Ensure the uploads directory exists inside the container.
@@ -1323,6 +1384,8 @@ pub struct Message {
     pub document: Option<Document>,
     /// Array of available photo sizes (smallest → largest).
     pub photo: Option<Vec<PhotoSize>>,
+    /// Set when the message is part of a media group (multi-file upload).
+    pub media_group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
