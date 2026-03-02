@@ -26,9 +26,7 @@ services:
     # Mount workspace directories into the container.
     # The worker can read and write these freely.
     volumes:
-      - ./soul:/workspace/soul
-      - ./skills:/workspace/skills
-      - ./cron:/workspace/cron
+      - ./:/workspace
 
     # ── Environment ───────────────────────────────────
     env_file: .env.docker

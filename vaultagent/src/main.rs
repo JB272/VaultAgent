@@ -97,8 +97,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let mut skills = SkillRegistry::new_with_remote(remote.clone());
 
-    // `research` stays host-side because it orchestrates via the LLM.
-    // Its sub-skills (web_search, web_fetch) are routed through the worker.
+    // Host-side orchestration skills.
+    // Their actual work uses remote worker tools.
     if let Some(ref llm_arc) = llm {
         skills.add(ResearchSkill::new(Arc::clone(llm_arc)).with_remote(remote.clone()));
         skills.add(SpawnSubagentSkill::new(Arc::clone(llm_arc)).with_remote(remote));

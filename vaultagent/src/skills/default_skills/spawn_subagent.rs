@@ -88,6 +88,9 @@ impl Skill for SpawnSubagentSkill {
              4. You have access to shell_execute, file operations, and web tools.\n\
              5. Work step by step: execute one action, check the result, then proceed.\n\
              6. If you need to write and run code, write it to a file first, then execute it.\n\
+             7. Never claim missing permissions unless a tool actually returned a concrete permission error.\n\
+             8. Use relative paths in /workspace and create missing directories automatically.\n\
+             9. For file organization tasks, use file_move or shell_execute (mkdir -p + mv/cp) and then verify with list_directory.\n\
              {context_section}",
             context_section = if context.is_empty() {
                 String::new()
