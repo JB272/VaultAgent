@@ -991,7 +991,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                             );
 
                             let metadata = format!(
-                                "[File upload]\n- name: {}\n- mime: {}\n- size: {}\n- saved_path: {}\n\n{}\n\nUse the saved_path with tools like read_file, shell_execute, file_store, or Python skills.",
+                                "[File upload]\n- name: {}\n- mime: {}\n- size: {}\n- saved_path: {}\n\n{}\n\nThe file is already saved on disk at the saved_path above. To move or copy it to another folder, use the file_copy tool (source=saved_path, destination=target_path). Do NOT try to re-create the file content with file_store.",
                                 document
                                     .file_name
                                     .clone()
@@ -1109,12 +1109,6 @@ async fn persist_telegram_file(
     original_name: Option<&str>,
     file_id: &str,
 ) -> Result<String, String> {
-    let uploads_dir = std::path::Path::new("skills").join("uploads");
-
-    tokio::fs::create_dir_all(&uploads_dir)
-        .await
-        .map_err(|e| format!("Failed to create uploads directory: {}", e))?;
-
     let safe_name = original_name
         .map(sanitize_filename)
         .filter(|n| !n.is_empty())
@@ -1122,13 +1116,66 @@ async fn persist_telegram_file(
 
     let unique = uuid::Uuid::new_v4().to_string();
     let stored_name = format!("{}_{}", unique, safe_name);
-    let file_path = uploads_dir.join(stored_name);
+    let relative_path = format!("skills/uploads/{}", stored_name);
 
-    tokio::fs::write(&file_path, bytes)
+    let container = std::env::var("WORKER_CONTAINER_NAME")
+        .unwrap_or_else(|_| "vaultagent-worker".to_string());
+    let container_path = format!("/workspace/{}", relative_path);
+
+    // Ensure the uploads directory exists inside the container.
+    let mkdir_out = Command::new("docker")
+        .arg("exec")
+        .arg(&container)
+        .arg("mkdir")
+        .arg("-p")
+        .arg("/workspace/skills/uploads")
+        .output()
         .await
-        .map_err(|e| format!("Failed to write uploaded file: {}", e))?;
+        .map_err(|e| format!("Failed to create uploads dir in container: {}", e))?;
+    if !mkdir_out.status.success() {
+        return Err(format!(
+            "mkdir in container failed: {}",
+            String::from_utf8_lossy(&mkdir_out.stderr)
+        ));
+    }
 
-    Ok(file_path.to_string_lossy().to_string())
+    // Pipe the file bytes into the container via `docker exec -i ... tee`.
+    let mut child = Command::new("docker")
+        .arg("exec")
+        .arg("-i")
+        .arg(&container)
+        .arg("tee")
+        .arg(&container_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn docker exec tee: {}", e))?;
+
+    {
+        use tokio::io::AsyncWriteExt;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or("Failed to open stdin for docker exec")?;
+        stdin
+            .write_all(bytes)
+            .await
+            .map_err(|e| format!("Failed to write bytes to container: {}", e))?;
+        stdin
+            .shutdown()
+            .await
+            .map_err(|e| format!("Failed to close stdin: {}", e))?;
+    }
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed to wait for docker exec: {}", e))?;
+    if !status.success() {
+        return Err(format!("docker exec tee exited with status {}", status));
+    }
+
+    Ok(relative_path)
 }
 
 fn sanitize_filename(input: &str) -> String {
