@@ -12,6 +12,38 @@ use crate::skills::Skill;
 /// runaway commands from blocking the worker.
 pub struct ShellExecuteSkill;
 
+fn is_package_manager_command(cmd: &str) -> bool {
+    let c = cmd.trim_start().to_lowercase();
+    c.starts_with("apt-get")
+        || c.starts_with("apt ")
+        || c.starts_with("dpkg")
+        || c.starts_with("pip ")
+        || c.starts_with("pip3 ")
+        || c.starts_with("python -m pip")
+        || c.starts_with("python3 -m pip")
+}
+
+fn has_sudo_prefix(cmd: &str) -> bool {
+    cmd.trim_start().to_lowercase().starts_with("sudo ")
+}
+
+fn looks_like_permission_error(stderr: &str) -> bool {
+    let s = stderr.to_lowercase();
+    s.contains("permission denied")
+        || s.contains("are you root")
+        || s.contains("could not open lock file")
+        || s.contains("/var/lib/apt/lists/partial is missing")
+}
+
+async fn run_shell(command: &str, working_dir: &str) -> Result<std::process::Output, std::io::Error> {
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(working_dir)
+        .output()
+        .await
+}
+
 #[async_trait]
 impl Skill for ShellExecuteSkill {
     fn definition(&self) -> LlmToolDefinition {
@@ -64,19 +96,73 @@ impl Skill for ShellExecuteSkill {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            Command::new("/bin/sh")
-                .arg("-c")
-                .arg(command)
-                .current_dir(working_dir)
-                .output(),
+            run_shell(command, working_dir),
         )
         .await;
 
         match result {
             Ok(Ok(output)) => {
+                let first_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let first_exit_code = output.status.code().unwrap_or(-1);
+
+                // Auto-retry once with sudo for package-manager commands if permissions failed.
+                if first_exit_code != 0
+                    && is_package_manager_command(command)
+                    && !has_sudo_prefix(command)
+                    && looks_like_permission_error(&first_stderr)
+                {
+                    let sudo_command = format!("sudo {}", command.trim_start());
+                    println!("[ShellExecute] Permission error detected, retrying with sudo: {}", sudo_command);
+
+                    let sudo_result = tokio::time::timeout(
+                        std::time::Duration::from_secs(120),
+                        run_shell(&sudo_command, working_dir),
+                    )
+                    .await;
+
+                    match sudo_result {
+                        Ok(Ok(sudo_output)) => {
+                            let stdout = String::from_utf8_lossy(&sudo_output.stdout);
+                            let stderr = String::from_utf8_lossy(&sudo_output.stderr);
+                            let exit_code = sudo_output.status.code().unwrap_or(-1);
+
+                            let max_len = 8000;
+                            let stdout_truncated = truncate_str(&stdout, max_len);
+                            let stderr_truncated = truncate_str(&stderr, max_len / 2);
+
+                            return json!({
+                                "ok": exit_code == 0,
+                                "exit_code": exit_code,
+                                "stdout": stdout_truncated,
+                                "stderr": stderr_truncated,
+                                "retried_with_sudo": true,
+                                "original_command": command,
+                                "executed_command": sudo_command,
+                            })
+                            .to_string();
+                        }
+                        Ok(Err(err)) => {
+                            return json!({
+                                "ok": false,
+                                "error": format!("Failed to execute sudo retry: {}", err),
+                                "retried_with_sudo": true,
+                            })
+                            .to_string();
+                        }
+                        Err(_) => {
+                            return json!({
+                                "ok": false,
+                                "error": "Sudo retry timed out after 120 seconds.",
+                                "retried_with_sudo": true,
+                            })
+                            .to_string();
+                        }
+                    }
+                }
+
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                let exit_code = output.status.code().unwrap_or(-1);
+                let exit_code = first_exit_code;
 
                 // Truncate long output to avoid blowing up the LLM context
                 let max_len = 8000;

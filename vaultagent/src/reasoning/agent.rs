@@ -54,6 +54,10 @@ impl Agent {
             .any(|n| n == "research" || n == "web_search" || n == "web_fetch")
     }
 
+    fn has_shell_capability(&self) -> bool {
+        self.skills.skill_names().iter().any(|n| n == "shell_execute")
+    }
+
     fn looks_like_no_internet_claim(text: &str) -> bool {
         let t = text.to_lowercase();
         t.contains("can't browse")
@@ -64,6 +68,18 @@ impl Agent {
             || t.contains("ich kann nicht im internet")
             || t.contains("ich habe keinen zugriff auf das internet")
             || t.contains("ich kann nicht auf externe websites zugreifen")
+    }
+
+    fn looks_like_permission_claim(text: &str) -> bool {
+        let t = text.to_lowercase();
+        t.contains("keine berechtigung")
+            || t.contains("habe keine berechtigung")
+            || t.contains("nicht die erforderlichen berechtigungen")
+            || t.contains("permission denied")
+            || t.contains("do not have permission")
+            || t.contains("don't have permission")
+            || t.contains("cannot install")
+            || t.contains("can't install")
     }
 
     /// Creates the main agent with a Soul (personality + memory).
@@ -261,7 +277,7 @@ impl Agent {
             let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
             format!(
-                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'lege die Dateien ab'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
+                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'lege die Dateien ab'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
                 base_prompt, chat_id, user_tz, now_utc, user_tz
             )
         };
@@ -282,6 +298,7 @@ impl Agent {
 
         let mut forced_tool_retry = false;
         let mut retried_after_no_web_claim = false;
+        let mut retried_after_permission_claim = false;
 
         for _ in 0..self.max_rounds {
             if Self::stop_requested(start_stop_epoch) {
@@ -354,6 +371,37 @@ impl Agent {
                         role: LlmRole::Developer,
                         content: LlmMessageContent::Text(
                             "You have web access through tools (research, web_search, web_fetch). Do not claim that you cannot browse the internet. Use the available tools now. If a tool fails, report the concrete error and continue with the best available result."
+                                .to_string(),
+                        ),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    });
+
+                    continue;
+                }
+
+                // Safety net: if the model claims missing permissions/install limits,
+                // force one retry with required tool-use and explicit stderr reporting.
+                if !retried_after_permission_claim
+                    && self.has_shell_capability()
+                    && Self::looks_like_permission_claim(content)
+                {
+                    retried_after_permission_claim = true;
+                    forced_tool_retry = true;
+
+                    messages.push(LlmMessage {
+                        role: LlmRole::Assistant,
+                        content: LlmMessageContent::Text(response.content),
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                    });
+
+                    messages.push(LlmMessage {
+                        role: LlmRole::Developer,
+                        content: LlmMessageContent::Text(
+                            "Do not claim missing permissions unless a real tool call failed with permission/installation errors. Use shell_execute now and report the exact stderr and exit_code if it fails. If install is needed, attempt it (for example with sudo apt-get / pip) before responding."
                                 .to_string(),
                         ),
                         name: None,
