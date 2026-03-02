@@ -84,7 +84,7 @@ impl Agent {
             custom_system_prompt: None,
             history: Mutex::new(history),
             last_prompt_tokens: Mutex::new(0),
-            max_rounds: 4,
+            max_rounds: 25,
             max_history: 50,
             context_window_size,
             history_path: Some(history_path),
@@ -247,7 +247,7 @@ impl Agent {
             let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
             format!(
-                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.",
+                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.",
                 base_prompt, chat_id, user_tz, now_utc, user_tz
             )
         };
