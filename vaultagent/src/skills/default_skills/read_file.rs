@@ -7,6 +7,16 @@ use crate::skills::Skill;
 
 pub struct ReadFileSkill;
 
+fn looks_like_binary_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [
+        ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".mp3", ".wav",
+        ".mp4", ".mov", ".zip", ".gz", ".tar", ".7z", ".exe", ".bin",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext))
+}
+
 #[async_trait]
 impl Skill for ReadFileSkill {
     fn definition(&self) -> LlmToolDefinition {
@@ -39,6 +49,14 @@ impl Skill for ReadFileSkill {
             .unwrap_or_default();
 
         println!("[ReadFile] Reading '{}'", path);
+
+        if looks_like_binary_path(path) {
+            return json!({
+                "ok": false,
+                "error": "read_file supports text files only. For PDFs use extract_pdf; for binary files use file_store or upload by path.",
+            })
+            .to_string();
+        }
 
         match sanitize_relative_path(path) {
             Ok(safe_path) => match tokio::fs::read_to_string(&safe_path).await {
