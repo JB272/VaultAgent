@@ -186,6 +186,23 @@ impl Gateway for WebsiteClient {
         self.set_typing(typing).await?;
         Ok(())
     }
+
+    async fn send_file(
+        &self,
+        _chat_id: i64,
+        path: &str,
+        caption: Option<&str>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut msg = format!("[File generated: {}]", path);
+        if let Some(caption) = caption {
+            if !caption.trim().is_empty() {
+                msg.push_str("\n");
+                msg.push_str(caption);
+            }
+        }
+        self.push_assistant_message(&msg).await?;
+        Ok(())
+    }
 }
 
 pub struct WebsiteSetup {

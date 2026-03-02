@@ -1,6 +1,7 @@
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 
 use crate::reasoning::llm_interface::{
@@ -10,6 +11,8 @@ use crate::reasoning::llm_interface::{
 use crate::reasoning::usage::UsageCounter;
 use crate::skills::SkillRegistry;
 use crate::soul::Soul;
+
+static GLOBAL_STOP_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 /// The Agent orchestrates LLM calls and tool executions.
 /// It holds a single persistent conversation history shared across all
@@ -35,6 +38,15 @@ pub struct Agent {
 }
 
 impl Agent {
+    fn stop_requested(start_epoch: u64) -> bool {
+        GLOBAL_STOP_EPOCH.load(Ordering::Relaxed) != start_epoch
+    }
+
+    /// Cancels all currently running agent/subagent loops in this process.
+    pub fn stop_all(&self) {
+        GLOBAL_STOP_EPOCH.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn has_web_capability(&self) -> bool {
         self.skills
             .skill_names()
@@ -200,6 +212,8 @@ impl Agent {
             return "LLM is not configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY to receive responses.".to_string();
         };
 
+        let start_stop_epoch = GLOBAL_STOP_EPOCH.load(Ordering::Relaxed);
+
         // Build user message content — with optional image for vision
         let user_content = if let Some(url) = image_url {
             LlmMessageContent::Parts(vec![
@@ -270,6 +284,10 @@ impl Agent {
         let mut retried_after_no_web_claim = false;
 
         for _ in 0..self.max_rounds {
+            if Self::stop_requested(start_stop_epoch) {
+                return "⏹ Stopped.".to_string();
+            }
+
             let mut request = LlmChatRequest::new("", messages.clone());
             request.tools = self.skills.tool_definitions();
             if forced_tool_retry {
@@ -281,6 +299,10 @@ impl Agent {
                 Ok(value) => value,
                 Err(err) => return format!("LLM call failed: {}", err),
             };
+
+            if Self::stop_requested(start_stop_epoch) {
+                return "⏹ Stopped.".to_string();
+            }
 
             // Record token usage
             if let Some(ref counter) = self.usage {
@@ -380,6 +402,10 @@ impl Agent {
             });
 
             for tool_call in response.tool_calls {
+                if Self::stop_requested(start_stop_epoch) {
+                    return "⏹ Stopped.".to_string();
+                }
+
                 let result = match self
                     .skills
                     .execute(&tool_call.name, &tool_call.arguments)

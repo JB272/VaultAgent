@@ -22,6 +22,44 @@ use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 
+fn parse_upload_directive(reply: &str) -> (String, Option<String>, Option<String>) {
+    // Preferred format from the model:
+    // {"text":"...","upload_path":"relative/path.ext","upload_caption":"..."}
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(reply.trim()) {
+        let text = value
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let upload_path = value
+            .get("upload_path")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string);
+        let upload_caption = value
+            .get("upload_caption")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string);
+
+        if upload_path.is_some() {
+            return (text, upload_path, upload_caption);
+        }
+    }
+
+    // Fallback format: UPLOAD_FILE: relative/path.ext
+    if let Some(path) = reply.trim().strip_prefix("UPLOAD_FILE:") {
+        let clean = path.trim();
+        if !clean.is_empty() {
+            return (
+                String::new(),
+                Some(clean.to_string()),
+                Some("Generated file".to_string()),
+            );
+        }
+    }
+
+    (reply.to_string(), None, None)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // ── Worker mode ─────────────────────────────────────
@@ -160,13 +198,21 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                 });
 
-                let reply = agent
+                let raw_reply = agent
                     .process(&chat.text, chat.chat_id, chat.image_url.as_deref())
                     .await;
                 let _ = cancel_tx.send(());
                 typing_task.await.ok();
 
-                gateways.broadcast_reply(chat.chat_id, &reply).await;
+                let (reply_text, upload_path, upload_caption) = parse_upload_directive(&raw_reply);
+                if let Some(path) = upload_path {
+                    gateways
+                        .broadcast_file(chat.chat_id, &path, upload_caption.as_deref())
+                        .await;
+                }
+                if !reply_text.trim().is_empty() {
+                    gateways.broadcast_reply(chat.chat_id, &reply_text).await;
+                }
                 gateways.broadcast_typing(chat.chat_id, false).await;
             }
             IncomingAction::Agent(_) => {}
@@ -190,13 +236,21 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }
                 });
 
-                let reply = agent
+                let raw_reply = agent
                     .process(&cron_action.prompt, cron_action.chat_id, None)
                     .await;
                 let _ = cancel_tx.send(());
                 typing_task.await.ok();
 
-                gateways.broadcast_reply(cron_action.chat_id, &reply).await;
+                let (reply_text, upload_path, upload_caption) = parse_upload_directive(&raw_reply);
+                if let Some(path) = upload_path {
+                    gateways
+                        .broadcast_file(cron_action.chat_id, &path, upload_caption.as_deref())
+                        .await;
+                }
+                if !reply_text.trim().is_empty() {
+                    gateways.broadcast_reply(cron_action.chat_id, &reply_text).await;
+                }
                 gateways.broadcast_typing(cron_action.chat_id, false).await;
             }
         }
@@ -235,6 +289,11 @@ async fn handle_global_command(text: &str, agent: &Agent) -> Option<String> {
                 std::process::exit(0);
             });
             Some("♻️ Rebooting...".to_string())
+        }
+        "/stop" => {
+            println!("[Main] Stop requested via command");
+            agent.stop_all();
+            Some("⏹ Stopped all running jobs/subagents.".to_string())
         }
         _ => None,
     }

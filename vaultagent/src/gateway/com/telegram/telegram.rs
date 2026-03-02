@@ -14,7 +14,9 @@ use axum::{
     routing::{get, post},
 };
 use reqwest::Client;
+use reqwest::multipart;
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path};
 use std::{collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -119,6 +121,7 @@ impl TelegramBot {
             ("tools", "List all available skills/tools"),
             ("stats", "Today's LLM token usage"),
             ("models", "Show or switch the active LLM model"),
+            ("stop", "Stop all running jobs/subagents"),
             ("reboot", "Restart the service"),
         ];
         if let Err(err) = self.set_my_commands(&commands).await {
@@ -493,6 +496,53 @@ impl TelegramBot {
             .ok_or_else(|| "Telegram API returned no message".into())
     }
 
+    pub async fn send_document(
+        &self,
+        chat_id: i64,
+        relative_path: &str,
+        caption: Option<&str>,
+    ) -> Result<Message, Box<dyn Error + Send + Sync>> {
+        let safe_path = sanitize_relative_path(relative_path)?;
+        let bytes = tokio::fs::read(&safe_path).await?;
+        let filename = Path::new(&safe_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file.bin")
+            .to_string();
+
+        let document_part = multipart::Part::bytes(bytes).file_name(filename);
+
+        let mut form = multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .part("document", document_part);
+
+        if let Some(caption) = caption {
+            if !caption.trim().is_empty() {
+                form = form
+                    .text("caption", caption.to_string())
+                    .text("parse_mode", "HTML".to_string());
+            }
+        }
+
+        let response = self
+            .client
+            .post(format!("{}/sendDocument", self.base_url))
+            .multipart(form)
+            .send()
+            .await?;
+
+        let body: ApiResponse<Message> = response.json().await?;
+        if !body.ok {
+            let error_message = body
+                .description
+                .unwrap_or_else(|| "Telegram API returned an unknown error".to_string());
+            return Err(error_message.into());
+        }
+
+        body.result
+            .ok_or_else(|| "Telegram API returned no message".into())
+    }
+
     pub async fn answer_callback_query(
         &self,
         callback_query_id: &str,
@@ -650,6 +700,16 @@ async fn handle_command(text: &str, bot: &TelegramBot, _chat_id: i64) -> Option<
         return Some(CommandResult::Text("♻️ Rebooting...".to_string()));
     }
 
+    if text == "/stop" {
+        if let Some(ref agent) = bot.agent {
+            agent.stop_all();
+            return Some(CommandResult::Text(
+                "⏹ Stopped all running jobs/subagents.".to_string(),
+            ));
+        }
+        return Some(CommandResult::Text("No agent configured.".to_string()));
+    }
+
     if text == "/new" {
         if let Some(ref agent) = bot.agent {
             agent.clear_history().await;
@@ -789,6 +849,38 @@ impl Gateway for TelegramBot {
         }
         self.send_chat_action(chat_id, "typing").await
     }
+
+    async fn send_file(
+        &self,
+        chat_id: i64,
+        path: &str,
+        caption: Option<&str>,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if !self.known_chat_ids.lock().await.contains(&chat_id) {
+            return Ok(());
+        }
+        self.send_document(chat_id, path, caption).await?;
+        Ok(())
+    }
+}
+
+fn sanitize_relative_path(path: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let p = Path::new(path);
+    if p.as_os_str().is_empty() {
+        return Err("Path must not be empty".into());
+    }
+    if p.is_absolute() {
+        return Err("Only relative paths are allowed for upload".into());
+    }
+    if p.components().any(|c| {
+        matches!(
+            c,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("Path contains forbidden segments (.. or root)".into());
+    }
+    Ok(path.to_string())
 }
 
 /// Extracted content from a Telegram message.

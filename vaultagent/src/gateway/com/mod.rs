@@ -25,6 +25,16 @@ pub trait Gateway: Send + Sync {
         chat_id: i64,
         typing: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Send a local file as chat attachment (if supported by the gateway).
+    async fn send_file(
+        &self,
+        _chat_id: i64,
+        _path: &str,
+        _caption: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err("File upload is not supported by this gateway".into())
+    }
 }
 
 /// Registry of all active gateways.
@@ -58,6 +68,14 @@ impl GatewayRegistry {
         for gw in &self.gateways {
             if let Err(e) = gw.notify_typing(chat_id, typing).await {
                 eprintln!("[Gateway:{}] Failed to set typing state: {}", gw.name(), e);
+            }
+        }
+    }
+
+    pub async fn broadcast_file(&self, chat_id: i64, path: &str, caption: Option<&str>) {
+        for gw in &self.gateways {
+            if let Err(e) = gw.send_file(chat_id, path, caption).await {
+                eprintln!("[Gateway:{}] Failed to send file '{}': {}", gw.name(), path, e);
             }
         }
     }
