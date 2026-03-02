@@ -13,6 +13,28 @@ use crate::skills::Skill;
 /// arbitrary bytes so Python skills/scripts can process them afterwards.
 pub struct FileStoreSkill;
 
+fn looks_like_binary_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .as_deref(),
+        Some("png")
+            | Some("jpg")
+            | Some("jpeg")
+            | Some("gif")
+            | Some("webp")
+            | Some("pdf")
+            | Some("zip")
+            | Some("tar")
+            | Some("gz")
+            | Some("mp3")
+            | Some("wav")
+            | Some("mp4")
+            | Some("bin")
+    )
+}
+
 #[async_trait]
 impl Skill for FileStoreSkill {
     fn definition(&self) -> LlmToolDefinition {
@@ -63,9 +85,25 @@ impl Skill for FileStoreSkill {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
+        let safe_path = match sanitize_relative_path(path) {
+            Ok(p) => p,
+            Err(err) => {
+                return json!({ "ok": false, "error": err }).to_string();
+            }
+        };
+
         let bytes: Vec<u8> = match (content, content_base64) {
             (Some(text), None) => text.as_bytes().to_vec(),
-            (None, Some(b64)) => match base64::engine::general_purpose::STANDARD.decode(b64) {
+            (None, Some(b64)) => {
+                if b64.trim().is_empty() {
+                    return json!({
+                        "ok": false,
+                        "error": "content_base64 must not be empty.",
+                    })
+                    .to_string();
+                }
+
+                match base64::engine::general_purpose::STANDARD.decode(b64) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     return json!({
@@ -74,7 +112,8 @@ impl Skill for FileStoreSkill {
                     })
                     .to_string();
                 }
-            },
+                }
+            }
             (Some(_), Some(_)) => {
                 return json!({
                     "ok": false,
@@ -91,19 +130,28 @@ impl Skill for FileStoreSkill {
             }
         };
 
+        if content.is_some() && looks_like_binary_path(&safe_path) {
+            return json!({
+                "ok": false,
+                "error": "Refusing to write plain text to a binary-looking file path. Use content_base64 for binary files.",
+            })
+            .to_string();
+        }
+
+        if content_base64.is_some() && bytes.is_empty() {
+            return json!({
+                "ok": false,
+                "error": "Decoded content_base64 is empty; refusing to overwrite file with 0 bytes.",
+            })
+            .to_string();
+        }
+
         println!(
             "[FileStore] Writing '{}' ({} bytes, append={})",
             path,
             bytes.len(),
             append
         );
-
-        let safe_path = match sanitize_relative_path(path) {
-            Ok(p) => p,
-            Err(err) => {
-                return json!({ "ok": false, "error": err }).to_string();
-            }
-        };
 
         if let Some(parent) = safe_path.parent() {
             if !parent.as_os_str().is_empty() {

@@ -57,6 +57,28 @@ fn parse_upload_directive(reply: &str) -> (String, Option<String>, Option<String
         }
     }
 
+    // Markdown fallback: [label](relative/path.ext)
+    // If the model only returns a local markdown link, treat it as upload target.
+    if let Some(open) = reply.rfind("](") {
+        let tail = &reply[open + 2..];
+        if let Some(close) = tail.find(')') {
+            let candidate = tail[..close].trim();
+            let looks_local = !candidate.starts_with("http://")
+                && !candidate.starts_with("https://")
+                && !candidate.starts_with('/')
+                && !candidate.contains("..");
+            let has_ext = std::path::Path::new(candidate).extension().is_some();
+
+            if looks_local && has_ext {
+                return (
+                    String::new(),
+                    Some(candidate.to_string()),
+                    Some("Generated file".to_string()),
+                );
+            }
+        }
+    }
+
     (reply.to_string(), None, None)
 }
 
