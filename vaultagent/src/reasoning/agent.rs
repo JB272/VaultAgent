@@ -178,6 +178,155 @@ impl Agent {
         }
     }
 
+    /// Checks if the context window is getting full and, if so, summarises
+    /// older messages into a single compact message to free up space.
+    /// Keeps the most recent `KEEP_RECENT` messages untouched.
+    async fn maybe_summarize_history(&self) {
+        const THRESHOLD: f64 = 0.70;
+        const KEEP_RECENT: usize = 10;
+
+        // Only summarise for the main agent (subagents are short-lived).
+        if self.history_path.is_none() {
+            return;
+        }
+
+        let prompt_tokens = *self.last_prompt_tokens.lock().await;
+        if prompt_tokens == 0 {
+            return;
+        }
+        let limit = (self.context_window_size as f64 * THRESHOLD) as u32;
+        if prompt_tokens < limit {
+            return;
+        }
+
+        let llm = match &self.llm {
+            Some(llm) => llm.clone(),
+            None => return,
+        };
+
+        let old_messages = {
+            let history = self.history.lock().await;
+            if history.len() <= KEEP_RECENT + 2 {
+                return; // Not enough messages to summarize
+            }
+            let split = history.len() - KEEP_RECENT;
+            history[..split].to_vec()
+        };
+
+        println!(
+            "[Agent] Context at {:.0}% — summarising {} older messages",
+            (prompt_tokens as f64 / self.context_window_size as f64) * 100.0,
+            old_messages.len()
+        );
+
+        // Build a short summarisation request from the old messages.
+        let mut sum_msgs = vec![LlmMessage {
+            role: LlmRole::Developer,
+            content: LlmMessageContent::Text(
+                "Du bist ein Zusammenfassungs-Assistent. Fasse die folgende Konversation kompakt zusammen. \
+                 Behalte alle wichtigen Fakten, Entscheidungen, Datei-Pfade, genannte Zahlen und Kontext. \
+                 Antworte NUR mit der Zusammenfassung, keine Einleitung, kein Kommentar."
+                    .to_string(),
+            ),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }];
+
+        // Include each old message as a simplified text representation.
+        for msg in &old_messages {
+            let role_label = match msg.role {
+                LlmRole::User => "User",
+                LlmRole::Assistant => "Assistant",
+                LlmRole::Tool => "Tool",
+                _ => continue, // skip system/developer
+            };
+            let text = match &msg.content {
+                LlmMessageContent::Text(t) => t.clone(),
+                LlmMessageContent::Parts(parts) => parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        LlmContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            if text.is_empty() && msg.tool_calls.is_empty() {
+                continue;
+            }
+            let mut line = format!("[{}] {}", role_label, text);
+            for tc in &msg.tool_calls {
+                line.push_str(&format!("\n  → tool_call: {}(…)", tc.name));
+            }
+            if let Some(ref name) = msg.name {
+                line = format!("[Tool:{}] {}", name, text);
+            }
+            sum_msgs.push(LlmMessage {
+                role: LlmRole::User,
+                content: LlmMessageContent::Text(line),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            });
+        }
+
+        sum_msgs.push(LlmMessage {
+            role: LlmRole::User,
+            content: LlmMessageContent::Text("Fasse zusammen.".to_string()),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        });
+
+        let mut req = LlmChatRequest::new("", sum_msgs);
+        req.max_tokens = Some(1024);
+
+        match llm.chat(req).await {
+            Ok(resp) => {
+                let summary = resp.content.trim().to_string();
+                if summary.is_empty() {
+                    eprintln!("[Agent] Summarization returned empty — falling back to simple trim");
+                    let mut history = self.history.lock().await;
+                    let split = history.len().saturating_sub(KEEP_RECENT);
+                    history.drain(0..split);
+                } else {
+                    println!("[Agent] Summarization complete ({} chars)", summary.len());
+                    let mut history = self.history.lock().await;
+                    let split = history.len().saturating_sub(KEEP_RECENT);
+                    history.drain(0..split);
+                    // Insert the summary as the first message.
+                    history.insert(
+                        0,
+                        LlmMessage {
+                            role: LlmRole::User,
+                            content: LlmMessageContent::Text(format!(
+                                "[Zusammenfassung bisheriger Konversation]\n{}",
+                                summary
+                            )),
+                            name: None,
+                            tool_call_id: None,
+                            tool_calls: Vec::new(),
+                        },
+                    );
+                }
+                // Track summary usage
+                if let Some(ref counter) = self.usage {
+                    if let Some(ref u) = resp.usage {
+                        counter.record(u.prompt_tokens, u.completion_tokens).await;
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("[Agent] Summarization failed: {} — falling back to simple trim", err);
+                let mut history = self.history.lock().await;
+                let split = history.len().saturating_sub(KEEP_RECENT);
+                history.drain(0..split);
+            }
+        }
+        self.save_history().await;
+    }
+
     /// Returns the names of all registered skills (used by the /tools command).
     pub fn skill_names(&self) -> Vec<String> {
         self.skills.skill_names()
@@ -259,13 +408,17 @@ impl Agent {
                 tool_calls: Vec::new(),
             });
 
-            // Sliding window: trim oldest messages
-            if history.len() > self.max_history {
+            // Hard cap: if history is way too large, do a simple trim first
+            // (the auto-summarizer handles the nuanced case below).
+            if history.len() > self.max_history * 2 {
                 let excess = history.len() - self.max_history;
                 history.drain(0..excess);
             }
         }
         self.save_history().await;
+
+        // Auto-summarize if context window is filling up.
+        self.maybe_summarize_history().await;
 
         // Build system prompt — use the custom override for subagents,
         // otherwise derive dynamically from Soul (personality + memory + session context).
