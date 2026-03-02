@@ -616,7 +616,12 @@ enum CommandResult {
 /// Works for mixed lists (MultiProvider aggregates all backends).
 fn filter_models_for_display(models: Vec<String>, _provider: &str) -> Vec<String> {
     let chat_prefixes = [
-        "gpt-4", "gpt-3.5-turbo", "o1", "o3", "o4", "chatgpt-4o",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "o1",
+        "o3",
+        "o4",
+        "chatgpt-4o",
         "claude",
     ];
     let mut v: Vec<String> = models

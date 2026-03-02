@@ -128,7 +128,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Insert preferred provider first so it becomes index 0 (= default).
     if preferred == "anthropic" {
         if let Ok(client) = anthropic_result {
-            println!("[Main][LLM] Enabled provider: {} (default)", client.provider_name());
+            println!(
+                "[Main][LLM] Enabled provider: {} (default)",
+                client.provider_name()
+            );
             backends.push(Arc::new(client));
         }
         if let Ok(client) = openai_result {
@@ -137,7 +140,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     } else {
         if let Ok(client) = openai_result {
-            println!("[Main][LLM] Enabled provider: {} (default)", client.provider_name());
+            println!(
+                "[Main][LLM] Enabled provider: {} (default)",
+                client.provider_name()
+            );
             backends.push(Arc::new(client));
         }
         if let Ok(client) = anthropic_result {
