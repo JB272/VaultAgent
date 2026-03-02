@@ -35,7 +35,10 @@ fn looks_like_permission_error(stderr: &str) -> bool {
         || s.contains("/var/lib/apt/lists/partial is missing")
 }
 
-async fn run_shell(command: &str, working_dir: &str) -> Result<std::process::Output, std::io::Error> {
+async fn run_shell(
+    command: &str,
+    working_dir: &str,
+) -> Result<std::process::Output, std::io::Error> {
     Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
@@ -112,7 +115,10 @@ impl Skill for ShellExecuteSkill {
                     && looks_like_permission_error(&first_stderr)
                 {
                     let sudo_command = format!("sudo {}", command.trim_start());
-                    println!("[ShellExecute] Permission error detected, retrying with sudo: {}", sudo_command);
+                    println!(
+                        "[ShellExecute] Permission error detected, retrying with sudo: {}",
+                        sudo_command
+                    );
 
                     let sudo_result = tokio::time::timeout(
                         std::time::Duration::from_secs(120),

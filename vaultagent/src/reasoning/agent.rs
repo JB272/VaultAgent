@@ -55,7 +55,10 @@ impl Agent {
     }
 
     fn has_shell_capability(&self) -> bool {
-        self.skills.skill_names().iter().any(|n| n == "shell_execute")
+        self.skills
+            .skill_names()
+            .iter()
+            .any(|n| n == "shell_execute")
     }
 
     fn looks_like_no_internet_claim(text: &str) -> bool {
