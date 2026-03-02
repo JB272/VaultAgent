@@ -75,7 +75,12 @@ impl GatewayRegistry {
     pub async fn broadcast_file(&self, chat_id: i64, path: &str, caption: Option<&str>) {
         for gw in &self.gateways {
             if let Err(e) = gw.send_file(chat_id, path, caption).await {
-                eprintln!("[Gateway:{}] Failed to send file '{}': {}", gw.name(), path, e);
+                eprintln!(
+                    "[Gateway:{}] Failed to send file '{}': {}",
+                    gw.name(),
+                    path,
+                    e
+                );
             }
         }
     }

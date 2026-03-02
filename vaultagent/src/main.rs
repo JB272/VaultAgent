@@ -249,7 +249,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         .await;
                 }
                 if !reply_text.trim().is_empty() {
-                    gateways.broadcast_reply(cron_action.chat_id, &reply_text).await;
+                    gateways
+                        .broadcast_reply(cron_action.chat_id, &reply_text)
+                        .await;
                 }
                 gateways.broadcast_typing(cron_action.chat_id, false).await;
             }
