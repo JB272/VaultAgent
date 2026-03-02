@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
-use crate::reasoning::llm_interface::{
-    LlmChatRequest, LlmChatResponse, LlmError, LlmInterface,
-};
+use crate::reasoning::llm_interface::{LlmChatRequest, LlmChatResponse, LlmError, LlmInterface};
 
 /// Wraps multiple LLM providers and delegates to the currently active one.
 /// Model switching automatically selects the correct backend.
@@ -14,7 +12,10 @@ pub struct MultiProvider {
 
 impl MultiProvider {
     pub fn new(backends: Vec<Arc<dyn LlmInterface>>) -> Self {
-        assert!(!backends.is_empty(), "MultiProvider needs at least one backend");
+        assert!(
+            !backends.is_empty(),
+            "MultiProvider needs at least one backend"
+        );
         Self {
             backends,
             active: Mutex::new(0),
