@@ -6,6 +6,7 @@ pub mod file_copy;
 pub mod file_store;
 pub mod http_utils;
 pub mod list_directory;
+pub mod memory_get;
 pub mod memory_save;
 pub mod memory_search;
 pub mod read_file;

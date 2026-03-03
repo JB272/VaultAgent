@@ -44,43 +44,43 @@ impl Memory {
     }
 
     /// Builds the memory context that gets injected into the system prompt.
-    /// Contains: MEMORY.md + yesterday + today (if available).
+    /// Contains: MEMORY.md only. Past daily logs are accessed on-demand via
+    /// `memory_search` / `memory_get` tools.
     pub fn context_block(&self) -> String {
-        let mut parts = Vec::new();
-
         let long_term = self.load_long_term();
-        if !long_term.trim().is_empty() {
-            parts.push(format!(
-                "## Long-term Memory (MEMORY.md)\n\n{}",
-                long_term.trim()
-            ));
+        if long_term.trim().is_empty() {
+            return String::new();
         }
+        format!(
+            "\n\n---\n# Long-term Memory (MEMORY.md)\n\n{}\n---\n",
+            long_term.trim()
+        )
+    }
 
-        let yesterday = self.load_yesterday();
-        if !yesterday.trim().is_empty() {
-            let date = Local::now().date_naive() - chrono::Duration::days(1);
-            parts.push(format!(
-                "## Memories from Yesterday ({})\n\n{}",
-                date.format("%d.%m.%Y"),
-                yesterday.trim()
-            ));
+    /// Reads a file relative to `soul_dir`. Path must not contain `..`.
+    pub fn load_file(&self, relative_path: &str) -> Result<String, String> {
+        if relative_path.contains("..") {
+            return Err("Path must not contain '..'.".to_string());
         }
+        let path = self.soul_dir.join(relative_path);
+        std::fs::read_to_string(&path)
+            .map_err(|e| format!("Cannot read '{}': {}", relative_path, e))
+    }
 
-        let today = self.load_today();
-        if !today.trim().is_empty() {
-            let date = Local::now().date_naive();
-            parts.push(format!(
-                "## Memories from Today ({})\n\n{}",
-                date.format("%d.%m.%Y"),
-                today.trim()
-            ));
+    /// Writes a session snapshot to `memory/<filename>` (creates if absent,
+    /// skips if the file already exists to avoid duplicate snapshots).
+    pub async fn write_session_snapshot(
+        &self,
+        filename: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let path = self.soul_dir.join("memory").join(filename);
+        if path.exists() {
+            return Ok(());
         }
-
-        if parts.is_empty() {
-            String::new()
-        } else {
-            format!("\n\n---\n# Your Memory\n\n{}\n---\n", parts.join("\n\n"))
-        }
+        tokio::fs::write(&path, content)
+            .await
+            .map_err(|e| format!("Could not write session snapshot '{}': {}", filename, e))
     }
 
     // ── Writing ────────────────────────────────────────────────

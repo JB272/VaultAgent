@@ -362,10 +362,132 @@ impl Agent {
     }
 
     /// Clears the shared conversation history. Called by /new.
+    /// Snapshots the session to a dated memory file before clearing.
     pub async fn clear_history(&self) {
+        self.snapshot_and_save_session().await;
         self.history.lock().await.clear();
         *self.last_prompt_tokens.lock().await = 0;
         self.save_history().await;
+    }
+
+    /// Summarises the current conversation and saves it to
+    /// `soul/memory/YYYY-MM-DD-<slug>.md` so past sessions can be recalled
+    /// on-demand via `memory_search` / `memory_get`.
+    async fn snapshot_and_save_session(&self) {
+        let (Some(llm), Some(soul)) = (&self.llm, &self.soul) else {
+            return;
+        };
+
+        // Clone history before doing anything async.
+        let messages = {
+            let history = self.history.lock().await;
+            if history.is_empty() {
+                return;
+            }
+            history.clone()
+        };
+
+        // Build a compact text representation of the conversation.
+        let convo_text: String = messages
+            .iter()
+            .filter_map(|msg| {
+                let role_label = match msg.role {
+                    LlmRole::User => "User",
+                    LlmRole::Assistant => "Assistant",
+                    _ => return None,
+                };
+                let text = match &msg.content {
+                    LlmMessageContent::Text(t) => t.clone(),
+                    LlmMessageContent::Parts(parts) => parts
+                        .iter()
+                        .filter_map(|p| match p {
+                            LlmContentPart::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                };
+                if text.is_empty() {
+                    return None;
+                }
+                Some(format!("[{}] {}", role_label, text))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if convo_text.trim().is_empty() {
+            return;
+        }
+
+        // Truncate input so the summarisation stays cheap.
+        let truncated = &convo_text[..convo_text.len().min(8_000)];
+
+        let prompt = format!(
+            "Summarize this conversation compactly in 3-10 bullet points (same language as the conversation). \
+             Also generate a short, descriptive slug (2-4 words, lowercase, dashes only, no special chars). \
+             Respond with ONLY valid JSON: {{\"slug\": \"...\", \"summary\": \"...\"}}\n\n{}",
+            truncated
+        );
+
+        let mut req = LlmChatRequest::new("", vec![LlmMessage {
+            role: LlmRole::User,
+            content: LlmMessageContent::Text(prompt),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }]);
+        req.max_tokens = Some(512);
+
+        let resp = match llm.chat(req).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[Agent] Session snapshot LLM call failed: {}", e);
+                return;
+            }
+        };
+
+        // Track token usage.
+        if let (Some(ref counter), Some(ref u)) = (&self.usage, &resp.usage) {
+            counter.record(u.prompt_tokens, u.completion_tokens).await;
+        }
+
+        // Extract JSON — tolerate surrounding prose.
+        let raw = resp.content.trim();
+        let json_start = raw.find('{').unwrap_or(0);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw[json_start..]).unwrap_or_default();
+
+        let slug_raw = parsed
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or("session");
+        let summary = parsed
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or(raw);
+
+        // Sanitise slug: lowercase alphanumeric + dashes only.
+        let slug: String = slug_raw
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+
+        let date = chrono::Local::now().date_naive();
+        let filename = format!("{}-{}.md", date.format("%Y-%m-%d"), slug);
+        let content = format!("# Session: {}\n\n{}\n", slug, summary);
+
+        match soul.memory.write_session_snapshot(&filename, &content).await {
+            Ok(()) => println!("[Agent] Session snapshot → memory/{}", filename),
+            Err(e) => eprintln!("[Agent] Session snapshot write failed: {}", e),
+        }
     }
 
     /// Returns context window usage info. Called by /window.
