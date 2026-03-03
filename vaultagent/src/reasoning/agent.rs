@@ -429,13 +429,16 @@ impl Agent {
             truncated
         );
 
-        let mut req = LlmChatRequest::new("", vec![LlmMessage {
-            role: LlmRole::User,
-            content: LlmMessageContent::Text(prompt),
-            name: None,
-            tool_call_id: None,
-            tool_calls: Vec::new(),
-        }]);
+        let mut req = LlmChatRequest::new(
+            "",
+            vec![LlmMessage {
+                role: LlmRole::User,
+                content: LlmMessageContent::Text(prompt),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+            }],
+        );
         req.max_tokens = Some(512);
 
         let resp = match llm.chat(req).await {
@@ -447,7 +450,7 @@ impl Agent {
         };
 
         // Track token usage.
-        if let (Some(ref counter), Some(ref u)) = (&self.usage, &resp.usage) {
+        if let (Some(counter), Some(u)) = (&self.usage, &resp.usage) {
             counter.record(u.prompt_tokens, u.completion_tokens).await;
         }
 
@@ -484,7 +487,11 @@ impl Agent {
         let filename = format!("{}-{}.md", date.format("%Y-%m-%d"), slug);
         let content = format!("# Session: {}\n\n{}\n", slug, summary);
 
-        match soul.memory.write_session_snapshot(&filename, &content).await {
+        match soul
+            .memory
+            .write_session_snapshot(&filename, &content)
+            .await
+        {
             Ok(()) => println!("[Agent] Session snapshot → memory/{}", filename),
             Err(e) => eprintln!("[Agent] Session snapshot write failed: {}", e),
         }
