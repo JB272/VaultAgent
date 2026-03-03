@@ -59,24 +59,22 @@ ssh "$REMOTE_HOST" "mkdir -p $REMOTE_DIR/soul/memory $REMOTE_DIR/skills $REMOTE_
 # Binary
 scp "$BINARY" "$REMOTE_HOST:$REMOTE_DIR/$SERVICE_NAME"
 
-# Environment files — only copy if they don't exist on the server yet
+# Environment files — always overwrite, back up old version
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 if [ -f "$PROJECT_DIR/.env.secure" ]; then
-    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.secure" || {
-        scp "$PROJECT_DIR/.env.secure" "$REMOTE_HOST:$REMOTE_DIR/.env.secure"
-        echo "   ✓ .env.secure (host secrets)"
-    }
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.secure && cp $REMOTE_DIR/.env.secure $REMOTE_DIR/.env.secure.bak.$TIMESTAMP || true"
+    scp "$PROJECT_DIR/.env.secure" "$REMOTE_HOST:$REMOTE_DIR/.env.secure"
+    echo "   ✓ .env.secure (host secrets)"
 fi
 if [ -f "$PROJECT_DIR/.env.docker" ]; then
-    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.docker" || {
-        scp "$PROJECT_DIR/.env.docker" "$REMOTE_HOST:$REMOTE_DIR/.env.docker"
-        echo "   ✓ .env.docker (worker env)"
-    }
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env.docker && cp $REMOTE_DIR/.env.docker $REMOTE_DIR/.env.docker.bak.$TIMESTAMP || true"
+    scp "$PROJECT_DIR/.env.docker" "$REMOTE_HOST:$REMOTE_DIR/.env.docker"
+    echo "   ✓ .env.docker (worker env)"
 fi
 if [ -f "$PROJECT_DIR/.env" ]; then
-    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env" || {
-        scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
-        echo "   ✓ .env (fallback)"
-    }
+    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/.env && cp $REMOTE_DIR/.env $REMOTE_DIR/.env.bak.$TIMESTAMP || true"
+    scp "$PROJECT_DIR/.env" "$REMOTE_HOST:$REMOTE_DIR/.env"
+    echo "   ✓ .env (fallback)"
 fi
 
 # Trusted Chat-IDs — only if not present on server

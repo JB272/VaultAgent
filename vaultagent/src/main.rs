@@ -189,7 +189,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // ── Gateways ────────────────────────────────────────
     let mut gateways = GatewayRegistry::new();
 
-    let website = setup_website(incoming.register_service()).await?;
+    let website = setup_website(incoming.register_service(), &worker_url, &worker_token).await?;
     gateways.add(website.client);
 
     if let Some(telegram) =

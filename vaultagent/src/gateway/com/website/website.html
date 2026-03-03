@@ -3,180 +3,65 @@
   <head>
     <meta charset='UTF-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
-    <title>VaultAgent Chat</title>
+    <title>VaultAgent</title>
     <link rel='stylesheet' href='/assets/website.css' />
     <script src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'></script>
   </head>
   <body>
-    <section class='chat-shell'>
-      <header class='chat-header'>
-        <div class='chat-title'>VaultAgent Gateway Chat</div>
-        <div class='chat-status'>lokal verbunden</div>
+    <div class='app-shell'>
+      <header class='app-header'>
+        <div class='app-title'>VaultAgent</div>
+        <nav class='tab-nav'>
+          <button class='tab-btn active' data-tab='chat'>Chat</button>
+          <button class='tab-btn' data-tab='files'>Files</button>
+        </nav>
+        <div class='app-status' id='status-dot'>verbunden</div>
       </header>
-      <main id='messages' class='messages'>
-        <div class='bubble system'>Schreibe eine Nachricht, um sie als IncomingAction ans Gateway zu senden.</div>
-      </main>
-      <form id='composer' class='composer'>
-        <input id='messageInput' autocomplete='off' placeholder='Nachricht an das Gateway...' />
-        <button type='submit'>Senden</button>
-      </form>
-    </section>
 
-    <script>
-      const messagesEl = document.getElementById('messages');
-      const composerEl = document.getElementById('composer');
-      const inputEl = document.getElementById('messageInput');
+      <!-- Chat Tab -->
+      <div id='tab-chat' class='tab-content active'>
+        <main id='messages' class='messages'>
+          <div class='bubble system'>Schreibe eine Nachricht, um zu beginnen.</div>
+        </main>
+        <form id='composer' class='composer'>
+          <input id='messageInput' autocomplete='off' placeholder='Nachricht...' />
+          <button type='submit'>Senden</button>
+        </form>
+      </div>
 
-      // Markdown-Renderer konfigurieren
-      marked.setOptions({ breaks: true, gfm: true });
+      <!-- Files Tab -->
+      <div id='tab-files' class='tab-content'>
+        <div class='files-container'>
+          <div class='files-toolbar'>
+            <div id='breadcrumb' class='breadcrumb'>
+              <span class='crumb' data-path='.'>workspace</span>
+            </div>
+            <div class='files-actions'>
+              <button id='btn-new-file' class='toolbar-btn'>+ Datei</button>
+              <button id='btn-new-dir' class='toolbar-btn'>+ Ordner</button>
+              <button id='btn-refresh' class='toolbar-btn'>&#8635;</button>
+            </div>
+          </div>
 
-      function renderMarkdown(text) {
-        try {
-          return marked.parse(text);
-        } catch (e) {
-          // Fallback: plain text mit HTML-Escaping
-          const div = document.createElement('div');
-          div.textContent = text;
-          return div.innerHTML;
-        }
-      }
+          <div id='file-browser' class='file-browser'>
+            <div id='file-list' class='file-list'></div>
+          </div>
 
-      // Verfolge letzten bekannten Stand um nur Deltas zu rendern
-      let lastMessageCount = 0;
-      let lastTypingState = false;
-      let lastStreamText = '';
-      let userIsScrolledUp = false;
+          <div id='file-editor' class='file-editor hidden'>
+            <div class='editor-header'>
+              <button id='btn-back' class='toolbar-btn'>&larr; Zur&uuml;ck</button>
+              <span id='editor-filename' class='editor-filename'></span>
+              <div class='editor-actions'>
+                <button id='btn-save' class='toolbar-btn primary'>Speichern</button>
+                <button id='btn-delete' class='toolbar-btn danger'>L&ouml;schen</button>
+              </div>
+            </div>
+            <textarea id='editor-content' class='editor-content' spellcheck='false'></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
 
-      // Scroll-Tracking: User hat manuell hochgescrollt?
-      messagesEl.addEventListener('scroll', () => {
-        const atBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 40;
-        userIsScrolledUp = !atBottom;
-      });
-
-      function scrollToBottomIfNeeded() {
-        if (!userIsScrolledUp) {
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-      }
-
-      function createBubble(message) {
-        const bubble = document.createElement('div');
-        const sourceClass = message.source === 'you'
-          ? 'you'
-          : (message.source === 'assistant' ? 'assistant' : 'system');
-        bubble.className = `bubble ${sourceClass}`;
-
-        if (sourceClass === 'assistant') {
-          bubble.innerHTML = renderMarkdown(message.text);
-          // Links in neuem Tab öffnen
-          bubble.querySelectorAll('a').forEach(a => {
-            a.target = '_blank';
-            a.rel = 'noopener noreferrer';
-          });
-        } else {
-          bubble.textContent = message.text;
-        }
-
-        return bubble;
-      }
-
-      function createTypingBubble() {
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble system typing';
-        bubble.id = 'typing-indicator';
-        bubble.innerHTML = '<span class="dot-pulse"></span> Assistant denkt nach...';
-        return bubble;
-      }
-
-      function removeTypingBubble() {
-        const existing = document.getElementById('typing-indicator');
-        if (existing) existing.remove();
-      }
-
-      function removeStreamBubble() {
-        const existing = document.getElementById('stream-bubble');
-        if (existing) existing.remove();
-      }
-
-      async function refreshMessages() {
-        const response = await fetch('/api/messages');
-        if (!response.ok) return;
-        const data = await response.json();
-
-        const messages = data.messages || [];
-        let changed = false;
-
-        // Neue Nachrichten hinzufügen (Delta-Update)
-        if (messages.length !== lastMessageCount) {
-          // Typing/Stream entfernen bevor neue Nachrichten kommen
-          removeTypingBubble();
-          removeStreamBubble();
-
-          // Nur neue Nachrichten anhängen
-          const newMessages = messages.slice(lastMessageCount);
-          for (const msg of newMessages) {
-            messagesEl.appendChild(createBubble(msg));
-          }
-          lastMessageCount = messages.length;
-          changed = true;
-        }
-
-        // Stream-Text aktualisieren
-        const streamText = data.assistant_stream_text || '';
-        if (streamText !== lastStreamText) {
-          removeStreamBubble();
-          if (streamText) {
-            const streamBubble = document.createElement('div');
-            streamBubble.className = 'bubble assistant streaming';
-            streamBubble.id = 'stream-bubble';
-            streamBubble.innerHTML = renderMarkdown(streamText);
-            streamBubble.querySelectorAll('a').forEach(a => {
-              a.target = '_blank';
-              a.rel = 'noopener noreferrer';
-            });
-            messagesEl.appendChild(streamBubble);
-          }
-          lastStreamText = streamText;
-          changed = true;
-        }
-
-        // Typing-Indicator
-        const shouldShowTyping = data.assistant_typing && !streamText;
-        if (shouldShowTyping !== lastTypingState) {
-          removeTypingBubble();
-          if (shouldShowTyping) {
-            messagesEl.appendChild(createTypingBubble());
-          }
-          lastTypingState = shouldShowTyping;
-          changed = true;
-        }
-
-        if (changed) scrollToBottomIfNeeded();
-      }
-
-      composerEl.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        const text = inputEl.value.trim();
-        if (!text) return;
-
-        const response = await fetch('/api/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text })
-        });
-
-        if (response.ok) {
-          inputEl.value = '';
-          // Optimistic: sofort anzeigen
-          messagesEl.appendChild(createBubble({ text, source: 'you' }));
-          lastMessageCount++;
-          userIsScrolledUp = false;
-          scrollToBottomIfNeeded();
-        }
-      });
-
-      setInterval(refreshMessages, 400);
-      refreshMessages();
-    </script>
+    <script src='/assets/website.js'></script>
   </body>
 </html>

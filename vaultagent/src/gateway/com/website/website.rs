@@ -2,14 +2,17 @@ use crate::gateway::incoming_actions_queue::{ChatAction, IncomingAction, Incomin
 use async_trait::async_trait;
 use axum::{
     Json, Router,
-    extract::State,
-    http::StatusCode,
-    http::header,
-    response::{Html, IntoResponse},
+    body::Body,
+    extract::{Query, State},
+    http::{Request, StatusCode, header},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
     routing::get,
 };
+use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{error::Error, net::SocketAddr, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -46,6 +49,11 @@ impl WebsiteGateway {
     pub async fn start(
         &self,
         incoming_writer: IncomingActionWriter,
+        auth_username: String,
+        auth_password: String,
+        internal_token: String,
+        worker_url: String,
+        worker_token: String,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let app_state = WebsiteState {
             incoming_writer,
@@ -53,12 +61,24 @@ impl WebsiteGateway {
             messages: Arc::new(Mutex::new(Vec::new())),
             assistant_typing: Arc::new(Mutex::new(false)),
             assistant_stream_text: Arc::new(Mutex::new(None)),
+            auth_username,
+            auth_password,
+            internal_token,
+            worker_url,
+            worker_token,
+            http_client: Client::new(),
         };
 
         let app = Router::new()
             .route("/", get(index))
             .route("/assets/website.css", get(stylesheet))
+            .route("/assets/website.js", get(javascript))
             .route("/api/messages", get(get_messages).post(post_message))
+            .route("/api/files/list", get(list_files))
+            .route("/api/files/read", get(read_file_content))
+            .route("/api/files/write", axum::routing::post(write_file_content))
+            .route("/api/files/delete", axum::routing::post(delete_file_handler))
+            .route("/api/files/mkdir", axum::routing::post(create_directory))
             .route(
                 "/api/messages/system",
                 axum::routing::post(post_system_message),
@@ -71,10 +91,14 @@ impl WebsiteGateway {
                 "/api/assistant/stream",
                 axum::routing::post(post_assistant_stream),
             )
+            .layer(middleware::from_fn_with_state(
+                app_state.clone(),
+                auth_middleware,
+            ))
             .with_state(app_state);
 
-        let address = SocketAddr::from(([127, 0, 0, 1], self.port));
-        println!("[Website] Chat server listening on http://{}", address);
+        let address = SocketAddr::from(([0, 0, 0, 0], self.port));
+        println!("[Website] Server listening on http://0.0.0.0:{} (auth required)", self.port);
 
         tokio::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(address).await {
@@ -106,13 +130,15 @@ impl WebsiteGateway {
 pub struct WebsiteClient {
     http_client: Client,
     base_url: String,
+    internal_token: String,
 }
 
 impl WebsiteClient {
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, internal_token: &str) -> Self {
         Self {
             http_client: Client::new(),
             base_url: format!("http://127.0.0.1:{}", port),
+            internal_token: internal_token.to_string(),
         }
     }
 
@@ -124,6 +150,7 @@ impl WebsiteClient {
 
         self.http_client
             .post(format!("{}/api/messages/system", self.base_url))
+            .header("x-internal-token", &self.internal_token)
             .json(&payload)
             .send()
             .await?
@@ -137,6 +164,7 @@ impl WebsiteClient {
 
         self.http_client
             .post(format!("{}/api/assistant/typing", self.base_url))
+            .header("x-internal-token", &self.internal_token)
             .json(&payload)
             .send()
             .await?
@@ -150,6 +178,7 @@ impl WebsiteClient {
 
         self.http_client
             .post(format!("{}/api/assistant/stream", self.base_url))
+            .header("x-internal-token", &self.internal_token)
             .json(&payload)
             .send()
             .await?
@@ -212,14 +241,33 @@ pub struct WebsiteSetup {
 
 pub async fn setup_website(
     incoming_writer: IncomingActionWriter,
+    worker_url: &str,
+    worker_token: &str,
 ) -> Result<WebsiteSetup, Box<dyn Error + Send + Sync>> {
     let website = WebsiteGateway::from_env();
     let port = website.port();
     let chat_id = website.chat_id();
-    website.start(incoming_writer).await?;
+
+    let auth_username = std::env::var("USERNAME").unwrap_or_else(|_| "admin".to_string());
+    let auth_password = std::env::var("PASSWORD").expect(
+        "PASSWORD must be set in .env.secure for web interface authentication",
+    );
+
+    let internal_token = uuid::Uuid::new_v4().to_string();
+
+    website
+        .start(
+            incoming_writer,
+            auth_username,
+            auth_password,
+            internal_token.clone(),
+            worker_url.to_string(),
+            worker_token.to_string(),
+        )
+        .await?;
 
     Ok(WebsiteSetup {
-        client: WebsiteClient::new(port),
+        client: WebsiteClient::new(port, &internal_token),
         chat_id,
     })
 }
@@ -231,6 +279,12 @@ struct WebsiteState {
     messages: Arc<Mutex<Vec<WebMessage>>>,
     assistant_typing: Arc<Mutex<bool>>,
     assistant_stream_text: Arc<Mutex<Option<String>>>,
+    auth_username: String,
+    auth_password: String,
+    internal_token: String,
+    worker_url: String,
+    worker_token: String,
+    http_client: Client,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,6 +312,27 @@ struct PostAssistantTypingRequest {
 #[derive(Debug, Deserialize)]
 struct PostAssistantStreamRequest {
     text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FilePathQuery {
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WriteFileRequest {
+    path: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteFileRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateDirRequest {
+    path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -385,5 +460,190 @@ async fn post_assistant_stream(
     });
     StatusCode::ACCEPTED
 }
+
+// ── Authentication ─────────────────────────────────────────────────────
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+async fn auth_middleware(
+    State(state): State<WebsiteState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    // Internal token (for WebsiteClient within the same process)
+    if let Some(token) = request.headers().get("x-internal-token") {
+        if let Ok(token_str) = token.to_str() {
+            if constant_time_eq(token_str.as_bytes(), state.internal_token.as_bytes()) {
+                return next.run(request).await;
+            }
+        }
+    }
+
+    // HTTP Basic Auth
+    if let Some(auth_header) = request.headers().get(header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(encoded) = auth_str.strip_prefix("Basic ") {
+                if let Ok(decoded) =
+                    base64::engine::general_purpose::STANDARD.decode(encoded)
+                {
+                    if let Ok(credentials) = String::from_utf8(decoded) {
+                        if let Some((user, pass)) = credentials.split_once(':') {
+                            let user_ok = constant_time_eq(
+                                user.as_bytes(),
+                                state.auth_username.as_bytes(),
+                            );
+                            let pass_ok = constant_time_eq(
+                                pass.as_bytes(),
+                                state.auth_password.as_bytes(),
+                            );
+                            if user_ok && pass_ok {
+                                return next.run(request).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Basic realm=\"VaultAgent\"")],
+        "Unauthorized",
+    )
+        .into_response()
+}
+
+// ── File API (proxied to Docker worker) ────────────────────────────────
+
+async fn call_worker_skill(
+    state: &WebsiteState,
+    skill: &str,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, StatusCode> {
+    let mut req = state
+        .http_client
+        .post(format!("{}/execute", state.worker_url))
+        .json(&json!({ "name": skill, "arguments": arguments }));
+
+    if !state.worker_token.is_empty() {
+        req = req.header("x-worker-token", &state.worker_token);
+    }
+
+    let response = req.send().await.map_err(|e| {
+        eprintln!("[Website][Files] Worker request failed: {}", e);
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    let data: serde_json::Value = response.json().await.map_err(|e| {
+        eprintln!("[Website][Files] Failed to parse worker response: {}", e);
+        StatusCode::BAD_GATEWAY
+    })?;
+
+    // Worker returns { ok, result: Option<String>, error }.
+    // Parse the inner result string as JSON for the frontend.
+    if let Some(result_str) = data.get("result").and_then(|v| v.as_str()) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(result_str) {
+            return Ok(parsed);
+        }
+    }
+
+    Ok(data)
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+async fn list_files(
+    State(state): State<WebsiteState>,
+    Query(query): Query<FilePathQuery>,
+) -> impl IntoResponse {
+    let path = query.path.unwrap_or_else(|| ".".to_string());
+    match call_worker_skill(&state, "list_directory", json!({ "path": path })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn read_file_content(
+    State(state): State<WebsiteState>,
+    Query(query): Query<FilePathQuery>,
+) -> impl IntoResponse {
+    let path = query.path.unwrap_or_default();
+    if path.is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match call_worker_skill(&state, "read_file", json!({ "path": path })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn write_file_content(
+    State(state): State<WebsiteState>,
+    Json(request): Json<WriteFileRequest>,
+) -> impl IntoResponse {
+    if request.path.trim().is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match call_worker_skill(
+        &state,
+        "write_file",
+        json!({ "path": request.path, "content": request.content }),
+    )
+    .await
+    {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn delete_file_handler(
+    State(state): State<WebsiteState>,
+    Json(request): Json<DeleteFileRequest>,
+) -> impl IntoResponse {
+    let path = request.path.trim().to_string();
+    if path.is_empty() || path == "." || path == "/" || path.contains('\0') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let cmd = format!("rm -rf {}", shell_escape(&path));
+    match call_worker_skill(&state, "shell_execute", json!({ "command": cmd })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn create_directory(
+    State(state): State<WebsiteState>,
+    Json(request): Json<CreateDirRequest>,
+) -> impl IntoResponse {
+    let path = request.path.trim().to_string();
+    if path.is_empty() || path.contains('\0') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let cmd = format!("mkdir -p {}", shell_escape(&path));
+    match call_worker_skill(&state, "shell_execute", json!({ "command": cmd })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn javascript() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        WEBSITE_JS,
+    )
+}
+
 const INDEX_HTML: &str = include_str!("website.html");
 const WEBSITE_CSS: &str = include_str!("website.css");
+const WEBSITE_JS: &str = include_str!("website.js");
