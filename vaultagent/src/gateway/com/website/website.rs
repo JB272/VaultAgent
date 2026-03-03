@@ -77,8 +77,16 @@ impl WebsiteGateway {
             .route("/api/files/list", get(list_files))
             .route("/api/files/read", get(read_file_content))
             .route("/api/files/write", axum::routing::post(write_file_content))
-            .route("/api/files/delete", axum::routing::post(delete_file_handler))
+            .route(
+                "/api/files/delete",
+                axum::routing::post(delete_file_handler),
+            )
             .route("/api/files/mkdir", axum::routing::post(create_directory))
+            .route(
+                "/api/files/rename",
+                axum::routing::post(rename_file_handler),
+            )
+            .route("/api/files/copy", axum::routing::post(copy_file_handler))
             .route(
                 "/api/messages/system",
                 axum::routing::post(post_system_message),
@@ -98,19 +106,22 @@ impl WebsiteGateway {
             .with_state(app_state);
 
         let address = SocketAddr::from(([0, 0, 0, 0], self.port));
-        println!("[Website] Server listening on http://0.0.0.0:{} (auth required)", self.port);
+        println!(
+            "[Website] Server listening on http://0.0.0.0:{} (auth required)",
+            self.port
+        );
 
         tokio::spawn(async move {
             let listener = match tokio::net::TcpListener::bind(address).await {
                 Ok(value) => value,
                 Err(err) => {
-                        eprintln!("[Website] Failed to bind port: {}", err);
+                    eprintln!("[Website] Failed to bind port: {}", err);
                     return;
                 }
             };
 
             if let Err(err) = axum::serve(listener, app).await {
-                    eprintln!("[Website] Server exited with error: {}", err);
+                eprintln!("[Website] Server exited with error: {}", err);
             }
         });
 
@@ -249,9 +260,8 @@ pub async fn setup_website(
     let chat_id = website.chat_id();
 
     let auth_username = std::env::var("USERNAME").unwrap_or_else(|_| "admin".to_string());
-    let auth_password = std::env::var("PASSWORD").expect(
-        "PASSWORD must be set in .env.secure for web interface authentication",
-    );
+    let auth_password = std::env::var("PASSWORD")
+        .expect("PASSWORD must be set in .env.secure for web interface authentication");
 
     let internal_token = uuid::Uuid::new_v4().to_string();
 
@@ -333,6 +343,18 @@ struct DeleteFileRequest {
 #[derive(Debug, Deserialize)]
 struct CreateDirRequest {
     path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameFileRequest {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopyFileRequest {
+    from: String,
+    to: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -491,19 +513,13 @@ async fn auth_middleware(
     if let Some(auth_header) = request.headers().get(header::AUTHORIZATION) {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(encoded) = auth_str.strip_prefix("Basic ") {
-                if let Ok(decoded) =
-                    base64::engine::general_purpose::STANDARD.decode(encoded)
-                {
+                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
                     if let Ok(credentials) = String::from_utf8(decoded) {
                         if let Some((user, pass)) = credentials.split_once(':') {
-                            let user_ok = constant_time_eq(
-                                user.as_bytes(),
-                                state.auth_username.as_bytes(),
-                            );
-                            let pass_ok = constant_time_eq(
-                                pass.as_bytes(),
-                                state.auth_password.as_bytes(),
-                            );
+                            let user_ok =
+                                constant_time_eq(user.as_bytes(), state.auth_username.as_bytes());
+                            let pass_ok =
+                                constant_time_eq(pass.as_bytes(), state.auth_password.as_bytes());
                             if user_ok && pass_ok {
                                 return next.run(request).await;
                             }
@@ -637,9 +653,44 @@ async fn create_directory(
     }
 }
 
+async fn rename_file_handler(
+    State(state): State<WebsiteState>,
+    Json(request): Json<RenameFileRequest>,
+) -> impl IntoResponse {
+    let from = request.from.trim().to_string();
+    let to = request.to.trim().to_string();
+    if from.is_empty() || to.is_empty() || from.contains('\0') || to.contains('\0') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let cmd = format!("mv {} {}", shell_escape(&from), shell_escape(&to));
+    match call_worker_skill(&state, "shell_execute", json!({ "command": cmd })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+async fn copy_file_handler(
+    State(state): State<WebsiteState>,
+    Json(request): Json<CopyFileRequest>,
+) -> impl IntoResponse {
+    let from = request.from.trim().to_string();
+    let to = request.to.trim().to_string();
+    if from.is_empty() || to.is_empty() || from.contains('\0') || to.contains('\0') {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let cmd = format!("cp -r {} {}", shell_escape(&from), shell_escape(&to));
+    match call_worker_skill(&state, "shell_execute", json!({ "command": cmd })).await {
+        Ok(data) => Json(data).into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
 async fn javascript() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         WEBSITE_JS,
     )
 }

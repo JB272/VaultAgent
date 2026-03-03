@@ -150,6 +150,9 @@ const fileEditor     = document.getElementById('file-editor');
 const breadcrumbEl   = document.getElementById('breadcrumb');
 const editorFilename = document.getElementById('editor-filename');
 const editorContent  = document.getElementById('editor-content');
+const contextMenu    = document.getElementById('context-menu');
+
+let contextTarget = null; // { path, name, type }
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -173,12 +176,16 @@ function updateBreadcrumb(path) {
     if (i > 0) {
       const sep = document.createElement('span');
       sep.className = 'crumb-sep';
-      sep.textContent = ' / ';
+      sep.textContent = '/';
       breadcrumbEl.appendChild(sep);
     }
     const crumb = document.createElement('span');
     crumb.className = 'crumb';
-    crumb.textContent = i === 0 ? 'workspace' : part;
+    if (i === 0) {
+      crumb.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg> workspace';
+    } else {
+      crumb.textContent = part;
+    }
     const crumbPath = i === 0 ? '.' : parts.slice(1, i + 1).join('/');
     crumb.addEventListener('click', () => loadFiles(crumbPath));
     breadcrumbEl.appendChild(crumb);
@@ -254,7 +261,7 @@ function createFileEntry(entry, entryPath) {
 
   if (entry.size != null && entry.type !== 'dir') {
     const size = document.createElement('span');
-    size.className = 'file-size';
+    size.className = 'file-meta';
     size.textContent = formatSize(entry.size);
     el.appendChild(size);
   }
@@ -263,6 +270,15 @@ function createFileEntry(entry, entryPath) {
     if (entry.type === 'dir') loadFiles(entryPath);
     else openFile(entryPath);
   });
+
+  // Context menu (right-click)
+  if (entry.name !== '..') {
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      contextTarget = { path: entryPath, name: entry.name, type: entry.type };
+      showContextMenu(e.clientX, e.clientY);
+    });
+  }
 
   return el;
 }
@@ -283,6 +299,115 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
+
+// ── Context Menu ───────────────────────────────────────
+
+function showContextMenu(x, y) {
+  contextMenu.classList.remove('hidden');
+  contextMenu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  contextMenu.style.top = Math.min(y, window.innerHeight - 160) + 'px';
+}
+
+function hideContextMenu() {
+  contextMenu.classList.add('hidden');
+  contextTarget = null;
+}
+
+document.addEventListener('click', hideContextMenu);
+document.addEventListener('contextmenu', (e) => {
+  if (!e.target.closest('.file-entry')) hideContextMenu();
+});
+
+contextMenu.querySelectorAll('.ctx-item').forEach(item => {
+  item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!contextTarget) return;
+    const action = item.dataset.action;
+    const target = contextTarget;
+    hideContextMenu();
+
+    if (action === 'open') {
+      if (target.type === 'dir') loadFiles(target.path);
+      else openFile(target.path);
+    } else if (action === 'rename') {
+      promptRename(target.path, target.name);
+    } else if (action === 'copy') {
+      promptCopy(target.path, target.name);
+    } else if (action === 'delete') {
+      confirmDelete(target.path, target.name);
+    }
+  });
+});
+
+// ── File Operations ────────────────────────────────────
+
+async function promptRename(path, name) {
+  showModal('Umbenennen', name, async (newName) => {
+    if (!newName || newName === name) return;
+    const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+    const to = dir === '.' ? newName : dir + '/' + newName;
+    try {
+      const res = await fetch('/api/files/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: path, to }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('Fehler ' + res.status);
+      const result = await res.json();
+      if (result.ok) {
+        showToast('Umbenannt!');
+        loadFiles(currentPath);
+      } else {
+        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+      }
+    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+  }, 'Umbenennen');
+}
+
+async function promptCopy(path, name) {
+  const defaultName = name.includes('.')
+    ? name.replace(/(\.[^.]+)$/, '_copy$1')
+    : name + '_copy';
+  showModal('Kopieren', defaultName, async (newName) => {
+    if (!newName) return;
+    const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+    const to = dir === '.' ? newName : dir + '/' + newName;
+    try {
+      const res = await fetch('/api/files/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: path, to }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('Fehler ' + res.status);
+      const result = await res.json();
+      if (result.ok) {
+        showToast('Kopiert!');
+        loadFiles(currentPath);
+      } else {
+        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+      }
+    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+  }, 'Kopieren');
+}
+
+async function confirmDelete(path, name) {
+  if (!confirm('"' + name + '" wirklich l\u00f6schen?')) return;
+  try {
+    const res = await fetch('/api/files/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+      credentials: 'same-origin',
+    });
+    if (!res.ok) throw new Error('Fehler ' + res.status);
+    showToast('Gel\u00f6scht!');
+    loadFiles(currentPath);
+  } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+}
+
+// ── File Editor ────────────────────────────────────────
 
 async function openFile(path) {
   const binExts = [
@@ -337,23 +462,38 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   }
 });
 
-// Delete
-document.getElementById('btn-delete').addEventListener('click', async () => {
+// Delete from editor
+document.getElementById('btn-delete-editor').addEventListener('click', async () => {
   const path = editorFilename.textContent;
-  if (!confirm('Datei "' + path + '" wirklich l\u00f6schen?')) return;
-  try {
-    const res = await fetch('/api/files/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
-      credentials: 'same-origin',
-    });
-    if (!res.ok) throw new Error('Fehler ' + res.status);
-    showToast('Gel\u00f6scht!');
-    document.getElementById('btn-back').click();
-  } catch (err) {
-    showToast('Fehler: ' + err.message, 'error');
-  }
+  const name = path.includes('/') ? path.split('/').pop() : path;
+  confirmDelete(path, name);
+});
+
+// Rename from editor
+document.getElementById('btn-rename-editor').addEventListener('click', () => {
+  const path = editorFilename.textContent;
+  const name = path.includes('/') ? path.split('/').pop() : path;
+  showModal('Umbenennen', name, async (newName) => {
+    if (!newName || newName === name) return;
+    const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
+    const to = dir === '.' ? newName : dir + '/' + newName;
+    try {
+      const res = await fetch('/api/files/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: path, to }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('Fehler ' + res.status);
+      const result = await res.json();
+      if (result.ok) {
+        showToast('Umbenannt!');
+        editorFilename.textContent = to;
+      } else {
+        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+      }
+    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+  }, 'Umbenennen');
 });
 
 // Back
@@ -410,6 +550,7 @@ document.addEventListener('keydown', (e) => {
       document.getElementById('btn-save').click();
     }
   }
+  if (e.key === 'Escape') hideContextMenu();
 });
 
 // Tab key in editor inserts spaces
@@ -424,7 +565,9 @@ editorContent.addEventListener('keydown', (e) => {
   }
 });
 
-function showModal(title, placeholder, onConfirm) {
+// ── Modal ──────────────────────────────────────────────
+
+function showModal(title, defaultValue, onConfirm, confirmLabel) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
 
@@ -436,7 +579,8 @@ function showModal(title, placeholder, onConfirm) {
 
   const input = document.createElement('input');
   input.type = 'text';
-  input.placeholder = placeholder;
+  input.value = defaultValue || '';
+  input.placeholder = title;
 
   const actions = document.createElement('div');
   actions.className = 'modal-actions';
@@ -447,7 +591,7 @@ function showModal(title, placeholder, onConfirm) {
 
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'toolbar-btn primary';
-  confirmBtn.textContent = 'Erstellen';
+  confirmBtn.textContent = confirmLabel || 'Erstellen';
 
   actions.appendChild(cancelBtn);
   actions.appendChild(confirmBtn);
@@ -458,6 +602,7 @@ function showModal(title, placeholder, onConfirm) {
   document.body.appendChild(overlay);
 
   input.focus();
+  input.select();
 
   const close = () => overlay.remove();
   cancelBtn.addEventListener('click', close);
