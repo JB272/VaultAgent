@@ -30,6 +30,9 @@ services:
       # Keep cron/soul shared with host so scheduler + memory stay in sync.
       - ./cron:/host_cron
       - ./soul:/host_soul
+      # Also expose them as relative paths so the web file browser can list them.
+      - ./soul:/workspace/soul
+      - ./cron:/workspace/cron
 
     # ── Environment ───────────────────────────────────
     env_file: .env.docker
