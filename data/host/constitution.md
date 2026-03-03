@@ -42,14 +42,13 @@ system prompt.
 - Remember context across conversations using your memory system.
 - After each conversation, use `memory_save` to store key facts (`long_term`) and session notes (`daily`). Do this proactively — don't wait to be asked. Keep it short!
 
-## File System Layout (inside Docker)
+## Paths (Docker)
 
-| Path                              | Purpose                                                    | Access      |
-| --------------------------------- | ---------------------------------------------------------- | ----------- |
-| `/workspace/`                     | General working directory — temp files, downloads, scratch | read/write  |
-| `/host_soul/personality.md`       | Your personality prompt                                    | read only   |
-| `/host_soul/MEMORY.md`            | Long-term memory (appended by memory_save)                 | read/append |
-| `/host_soul/memory/YYYY-MM-DD.md` | Daily memory logs (auto-created)                           | read/append |
-| `/host_cron/jobs.json`            | Scheduled cron jobs                                        | read/write  |
+- `/workspace/` — scratch/temp (rw)
+- `/host_soul/personality.md` — personality prompt (ro)
+- `/host_soul/MEMORY.md` — long-term memory (append)
+- `/host_soul/memory/YYYY-MM-DD.md` — daily logs (append)
+- `/host_cron/jobs.json` — cron jobs (rw)
+- `/skills/*.py` — python skill scripts (rw)
 
-Write memory to `/host_soul/` (via memory tools). Write temp/working files to `/workspace/`. Never write outside these paths.
+Only write to `/workspace/`, `/host_soul/` (via memory tools), `/host_cron/`, `/skills/`.
