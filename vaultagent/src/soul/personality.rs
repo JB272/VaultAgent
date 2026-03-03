@@ -11,6 +11,26 @@ impl Personality {
     /// Initialises the Personality with the path to personality.md.
     pub fn load(soul_dir: &Path) -> Self {
         let path = soul_dir.join("personality.md");
+        if !path.exists() {
+            if let Err(err) = std::fs::create_dir_all(soul_dir) {
+                eprintln!(
+                    "[Soul][Personality] Failed to create soul dir '{}': {}",
+                    soul_dir.display(),
+                    err
+                );
+            } else if let Err(err) = std::fs::write(&path, "") {
+                eprintln!(
+                    "[Soul][Personality] Failed to create '{}': {}",
+                    path.display(),
+                    err
+                );
+            } else {
+                println!(
+                    "[Soul][Personality] Created missing file: {}",
+                    path.display()
+                );
+            }
+        }
         println!("[Soul][Personality] Path: {}", path.display());
         Self { path }
     }
@@ -20,6 +40,14 @@ impl Personality {
         match std::fs::read_to_string(&self.path) {
             Ok(content) if !content.trim().is_empty() => content,
             _ => Self::default_onboarding_prompt().to_string(),
+        }
+    }
+
+    /// True when a non-empty personality has been configured.
+    pub fn is_configured(&self) -> bool {
+        match std::fs::read_to_string(&self.path) {
+            Ok(content) => !content.trim().is_empty(),
+            Err(_) => false,
         }
     }
 

@@ -69,6 +69,19 @@ impl Soul {
             parts.push(constitution);
         }
 
+        if !self.personality.is_configured() {
+            parts.push(
+                "## Mandatory Onboarding Mode\n\
+personality.md is currently empty or missing.\n\
+You MUST stay in onboarding mode until configuration is completed.\n\
+Ask onboarding questions one or two at a time.\n\
+Do not switch to normal assistant tasks yet.\n\
+Once enough information is collected, create and save `soul/personality.md` using `write_file`,\n\
+then save key facts with `memory_save`."
+                    .to_string(),
+            );
+        }
+
         parts.push(self.personality.system_prompt());
 
         let memory_block = self.memory.context_block();
