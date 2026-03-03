@@ -20,6 +20,7 @@ REMOTE_DIR="/home/$REMOTE_USER/$SERVICE_NAME"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/vaultagent"
+DATA_DIR="$SCRIPT_DIR/data"
 BINARY="$PROJECT_DIR/target/$TARGET/release/$SERVICE_NAME"
 
 # ── Cross-compile ─────────────────────────────────────────
@@ -83,11 +84,12 @@ if [ -f "$PROJECT_DIR/trusted_chat_ids.md" ]; then
         scp "$PROJECT_DIR/trusted_chat_ids.md" "$REMOTE_HOST:$REMOTE_DIR/trusted_chat_ids.md"
 fi
 
+# ── data/container/ → Docker-mounted dirs (soul, cron, skills) ──
 # Soul — only copy files that don't exist on the server yet (never overwrite
 # personality.md, MEMORY.md, or daily logs written at runtime).
-echo "   Syncing soul/ (skip existing) …"
-for f in $(find "$PROJECT_DIR/soul" -type f); do
-    rel="${f#$PROJECT_DIR/}"   # e.g. soul/personality.md
+echo "   Syncing data/container/soul/ (skip existing) …"
+for f in $(find "$DATA_DIR/container/soul" -type f -not -name '.gitkeep'); do
+    rel="${f#$DATA_DIR/container/}"   # e.g. soul/personality.md
     ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/$rel" || {
         scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
         echo "   + $rel"
@@ -95,19 +97,26 @@ for f in $(find "$PROJECT_DIR/soul" -type f); do
 done
 
 # Python-Skills — always overwrite (code updates)
-# Use individual file copy to avoid double-nesting (scp -r dir/ into existing dir/ creates dir/dir/)
 ssh "$REMOTE_HOST" "find $REMOTE_DIR/skills -name '*.py' -delete 2>/dev/null || true"
-for f in $(find "$PROJECT_DIR/skills" -type f -name '*.py'); do
-    rel="${f#$PROJECT_DIR/}"   # e.g. skills/current_datetime.py
+for f in $(find "$DATA_DIR/container/skills" -type f -name '*.py'); do
+    rel="${f#$DATA_DIR/container/}"   # e.g. skills/current_datetime.py
     scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
 done
 echo "   ✓ Python skills synced"
 
 # Cron-Jobs — never overwrite (runtime data)
-if [ -f "$PROJECT_DIR/cron/jobs.json" ]; then
+if [ -f "$DATA_DIR/container/cron/jobs.json" ]; then
     ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/cron/jobs.json" || \
-        scp "$PROJECT_DIR/cron/jobs.json" "$REMOTE_HOST:$REMOTE_DIR/cron/jobs.json"
+        scp "$DATA_DIR/container/cron/jobs.json" "$REMOTE_HOST:$REMOTE_DIR/cron/jobs.json"
 fi
+
+# ── data/host/ → Host-only files (NOT accessible from Docker) ──
+echo "   Syncing data/host/ (always overwrite) …"
+for f in $(find "$DATA_DIR/host" -type f); do
+    rel="${f#$DATA_DIR/host/}"   # e.g. constitution.md
+    scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
+    echo "   ✓ $rel (host-only)"
+done
 
 # Docker files (for sandbox mode)
 if [ -f "$PROJECT_DIR/Dockerfile.worker" ]; then
