@@ -31,41 +31,30 @@ impl GitHubSkill {
 
         let api_base = std::env::var("GITHUB_API_BASE_URL")
             .unwrap_or_else(|_| "https://api.github.com".to_string());
-        let default_owner = std::env::var("GITHUB_DEFAULT_OWNER").unwrap_or_default();
-        let default_repo = std::env::var("GITHUB_DEFAULT_REPO").unwrap_or_default();
 
         Ok(GithubEnv {
             token,
             api_base: api_base.trim_end_matches('/').to_string(),
-            default_owner,
-            default_repo,
         })
     }
 
-    fn owner_repo_from_args(
-        &self,
-        arguments: &Value,
-        env: &GithubEnv,
-    ) -> Result<(String, String), String> {
+    fn owner_repo_from_args(&self, arguments: &Value) -> Result<(String, String), String> {
         let owner = arguments
             .get("owner")
             .and_then(Value::as_str)
-            .unwrap_or(env.default_owner.as_str())
+            .unwrap_or_default()
             .trim()
             .to_string();
 
         let repo = arguments
             .get("repo")
             .and_then(Value::as_str)
-            .unwrap_or(env.default_repo.as_str())
+            .unwrap_or_default()
             .trim()
             .to_string();
 
         if owner.is_empty() || repo.is_empty() {
-            return Err(
-                "owner and repo are required (or set GITHUB_DEFAULT_OWNER/GITHUB_DEFAULT_REPO)."
-                    .to_string(),
-            );
+            return Err("owner and repo are required for this action.".to_string());
         }
 
         Ok((owner, repo))
@@ -111,26 +100,43 @@ impl GitHubSkill {
         }
     }
 
-    fn git_auth_config(&self, env: &GithubEnv) -> String {
-        let basic = base64::engine::general_purpose::STANDARD
-            .encode(format!("x-access-token:{}", env.token));
-        format!("http.https://github.com/.extraheader=AUTHORIZATION: basic {}", basic)
+    fn git_auth_configs(&self, env: &GithubEnv) -> Vec<GitAuthConfig> {
+        vec![
+            // Common GitHub username aliases for token auth.
+            GitAuthConfig {
+                label: "basic(x-access-token)".to_string(),
+                extra_header: basic_auth_header("x-access-token", &env.token),
+            },
+            GitAuthConfig {
+                label: "basic(git)".to_string(),
+                extra_header: basic_auth_header("git", &env.token),
+            },
+            // Some setups accept bearer auth for git HTTP endpoints.
+            GitAuthConfig {
+                label: "bearer".to_string(),
+                extra_header: format!("AUTHORIZATION: bearer {}", env.token),
+            },
+        ]
     }
 
     async fn run_git_command(
         &self,
-        env: &GithubEnv,
-        args: Vec<String>,
+        extra_header: &str,
+        args: &[String],
     ) -> Result<(i32, String, String), String> {
         let mut cmd = Command::new("git");
-        cmd.arg("-c").arg(self.git_auth_config(env));
+        cmd.arg("-c").arg(format!(
+            "http.https://github.com/.extraheader={}",
+            extra_header
+        ));
         cmd.args(args);
 
-        let output = match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
-            Ok(Ok(out)) => out,
-            Ok(Err(err)) => return Err(format!("Failed to run git: {}", err)),
-            Err(_) => return Err("git command timed out after 120 seconds".to_string()),
-        };
+        let output =
+            match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(err)) => return Err(format!("Failed to run git: {}", err)),
+                Err(_) => return Err("git command timed out after 120 seconds".to_string()),
+            };
 
         let code = output.status.code().unwrap_or(-1);
         let stdout = truncate(&String::from_utf8_lossy(&output.stdout), 8000);
@@ -139,8 +145,39 @@ impl GitHubSkill {
         Ok((code, stdout, stderr))
     }
 
+    async fn run_git_with_fallback(
+        &self,
+        env: &GithubEnv,
+        args: &[String],
+    ) -> Result<(i32, String, String, String), String> {
+        let mut failures = Vec::new();
+
+        for cfg in self.git_auth_configs(env) {
+            match self.run_git_command(&cfg.extra_header, args).await {
+                Ok((exit_code, stdout, stderr)) => {
+                    if exit_code == 0 {
+                        return Ok((exit_code, stdout, stderr, cfg.label));
+                    }
+
+                    failures.push(format!(
+                        "{} -> exit {}: {}",
+                        cfg.label,
+                        exit_code,
+                        first_non_empty_line(&stderr).unwrap_or("unknown git error")
+                    ));
+                }
+                Err(err) => failures.push(format!("{} -> {}", cfg.label, err)),
+            }
+        }
+
+        Err(format!(
+            "git authentication failed for all strategies. {}",
+            failures.join(" | ")
+        ))
+    }
+
     async fn clone_repo(&self, arguments: &Value, env: &GithubEnv) -> String {
-        let (owner, repo) = match self.owner_repo_from_args(arguments, env) {
+        let (owner, repo) = match self.owner_repo_from_args(arguments) {
             Ok(v) => v,
             Err(err) => return json!({ "ok": false, "error": err }).to_string(),
         };
@@ -163,7 +200,9 @@ impl GitHubSkill {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("https://github.com/{}/{}.git", owner, repo));
+            .unwrap_or_else(|| format!("https://github.com/{}/{}.git", owner, repo))
+            .trim_end_matches('/')
+            .to_string();
 
         let git_ref = arguments
             .get("git_ref")
@@ -199,19 +238,24 @@ impl GitHubSkill {
                 args.push(r.clone());
             }
 
-            match self.run_git_command(env, args).await {
-                Ok((exit_code, stdout, stderr)) => json!({
+            match self.run_git_with_fallback(env, &args).await {
+                Ok((exit_code, stdout, stderr, auth_strategy)) => json!({
                     "ok": exit_code == 0,
                     "action": "clone_repo",
                     "updated_existing": true,
                     "path": destination_abs,
                     "repo_url": repo_url,
+                    "auth_strategy": auth_strategy,
                     "exit_code": exit_code,
                     "stdout": stdout,
                     "stderr": stderr,
                 })
                 .to_string(),
-                Err(err) => json!({ "ok": false, "error": err }).to_string(),
+                Err(err) => json!({
+                    "ok": false,
+                    "error": err,
+                    "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
+                }).to_string(),
             }
         } else {
             let mut args = vec!["clone".to_string()];
@@ -223,19 +267,24 @@ impl GitHubSkill {
             args.push(repo_url.clone());
             args.push(destination_abs.clone());
 
-            match self.run_git_command(env, args).await {
-                Ok((exit_code, stdout, stderr)) => json!({
+            match self.run_git_with_fallback(env, &args).await {
+                Ok((exit_code, stdout, stderr, auth_strategy)) => json!({
                     "ok": exit_code == 0,
                     "action": "clone_repo",
                     "updated_existing": false,
                     "path": destination_abs,
                     "repo_url": repo_url,
+                    "auth_strategy": auth_strategy,
                     "exit_code": exit_code,
                     "stdout": stdout,
                     "stderr": stderr,
                 })
                 .to_string(),
-                Err(err) => json!({ "ok": false, "error": err }).to_string(),
+                Err(err) => json!({
+                    "ok": false,
+                    "error": err,
+                    "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
+                }).to_string(),
             }
         }
     }
@@ -244,8 +293,11 @@ impl GitHubSkill {
 struct GithubEnv {
     token: String,
     api_base: String,
-    default_owner: String,
-    default_repo: String,
+}
+
+struct GitAuthConfig {
+    label: String,
+    extra_header: String,
 }
 
 #[async_trait]
@@ -276,11 +328,11 @@ impl Skill for GitHubSkill {
                     },
                     "owner": {
                         "type": "string",
-                        "description": "Repository owner/org. Optional if GITHUB_DEFAULT_OWNER is set."
+                        "description": "Repository owner/org (required for repo-specific actions)."
                     },
                     "repo": {
                         "type": "string",
-                        "description": "Repository name. Optional if GITHUB_DEFAULT_REPO is set."
+                        "description": "Repository name (required for repo-specific actions)."
                     },
                     "issue_number": {
                         "type": "integer",
@@ -374,7 +426,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "list_issues" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -387,7 +439,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "get_issue" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -407,7 +459,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "create_issue" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -424,7 +476,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "add_issue_comment" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -450,7 +502,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "list_pull_requests" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -463,7 +515,7 @@ impl Skill for GitHubSkill {
                 self.send_json(req).await
             }
             "get_pull_request" => {
-                let (owner, repo) = match self.owner_repo_from_args(arguments, &env) {
+                let (owner, repo) = match self.owner_repo_from_args(arguments) {
                     Ok(v) => v,
                     Err(err) => return json!({ "ok": false, "error": err }).to_string(),
                 };
@@ -508,6 +560,15 @@ fn sanitize_workspace_relative_path(path: &str) -> Result<String, String> {
     }
 
     Ok(path.trim().trim_start_matches("./").to_string())
+}
+
+fn basic_auth_header(username: &str, token: &str) -> String {
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{token}"));
+    format!("AUTHORIZATION: basic {}", basic)
+}
+
+fn first_non_empty_line(s: &str) -> Option<&str> {
+    s.lines().map(str::trim).find(|line| !line.is_empty())
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
