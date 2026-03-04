@@ -45,6 +45,10 @@ services:
       MAILBOX_POP3_PORT: ${MAILBOX_POP3_PORT:-995}
       MAILBOX_SMTP_HOST: ${MAILBOX_SMTP_HOST:-}
       MAILBOX_SMTP_PORT: ${MAILBOX_SMTP_PORT:-587}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
+      GITHUB_DEFAULT_OWNER: ${GITHUB_DEFAULT_OWNER:-}
+      GITHUB_DEFAULT_REPO: ${GITHUB_DEFAULT_REPO:-}
 
     # ── Network ───────────────────────────────────────
     # Only expose on localhost — the host orchestrator connects here.

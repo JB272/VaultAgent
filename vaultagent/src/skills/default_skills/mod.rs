@@ -4,6 +4,7 @@ pub mod cron_remove;
 pub mod extract_pdf;
 pub mod file_copy;
 pub mod file_store;
+pub mod github;
 pub mod http_utils;
 pub mod email_mailbox;
 pub mod list_directory;

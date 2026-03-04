@@ -26,6 +26,7 @@ use crate::skills::default_skills::cron_remove::CronRemoveSkill;
 use crate::skills::default_skills::extract_pdf::ExtractPdfSkill;
 use crate::skills::default_skills::file_copy::FileCopySkill;
 use crate::skills::default_skills::file_store::FileStoreSkill;
+use crate::skills::default_skills::github::GitHubSkill;
 use crate::skills::default_skills::list_directory::ListDirectorySkill;
 use crate::skills::default_skills::memory_get::MemoryGetSkill;
 use crate::skills::default_skills::memory_save::MemorySaveSkill;
@@ -254,6 +255,7 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
     skills.add(WebSearchSkill::new());
     skills.add(WebFetchSkill::new());
     skills.add(EmailMailboxSkill);
+    skills.add(GitHubSkill::new());
 
     // Memory skills
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
