@@ -100,11 +100,19 @@ impl Skill for SpawnSubagentSkill {
             }
         );
 
-        // Build the subagent's skill registry with all sandbox tools.
-        let sub_skills = match &self.remote {
-            Some(proxy) => SkillRegistry::new_with_remote(proxy.clone()),
-            None => SkillRegistry::new(),
+        let proxy = match &self.remote {
+            Some(proxy) => proxy.clone(),
+            None => {
+                return json!({
+                    "ok": false,
+                    "error": "spawn_subagent requires a configured RemoteSkillProxy (Docker worker).",
+                })
+                .to_string();
+            }
         };
+
+        // Route all tool calls through the sandbox worker.
+        let sub_skills = SkillRegistry::new_with_remote(proxy);
 
         let sub_agent = Agent::subagent(Arc::clone(&self.llm), sub_skills, system_prompt);
 

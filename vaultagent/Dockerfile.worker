@@ -6,8 +6,8 @@
 
 FROM python:3.11-slim-bookworm
 
-# Install sudo so the worker can install packages at runtime (e.g. apt-get install git)
-RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+# Install sudo + git in the worker image.
+RUN apt-get update && apt-get install -y --no-install-recommends sudo git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a user with UID 1000 to match the typical host user.
