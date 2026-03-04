@@ -30,6 +30,7 @@ use crate::skills::default_skills::list_directory::ListDirectorySkill;
 use crate::skills::default_skills::memory_get::MemoryGetSkill;
 use crate::skills::default_skills::memory_save::MemorySaveSkill;
 use crate::skills::default_skills::memory_search::MemorySearchSkill;
+use crate::skills::default_skills::email_mailbox::EmailMailboxSkill;
 use crate::skills::default_skills::read_file::ReadFileSkill;
 use crate::skills::default_skills::shell_execute::ShellExecuteSkill;
 use crate::skills::default_skills::web_fetch::WebFetchSkill;
@@ -252,6 +253,7 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
     // Web skills
     skills.add(WebSearchSkill::new());
     skills.add(WebFetchSkill::new());
+    skills.add(EmailMailboxSkill);
 
     // Memory skills
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));

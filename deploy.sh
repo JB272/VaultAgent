@@ -147,9 +147,9 @@ fi
 
 # ── Docker sandbox setup ─────────────────────────────────
 echo "🐳 Building sandbox worker image …"
-ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose build --quiet"
+ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose --env-file .env.secure build --quiet"
 echo "🐳 Starting sandbox worker …"
-ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose up -d"
+ssh "$REMOTE_HOST" "cd $REMOTE_DIR && docker compose --env-file .env.secure up -d"
 # Wait for the worker to become healthy
 echo "⏳ Waiting for worker health check …"
 for i in $(seq 1 15); do
