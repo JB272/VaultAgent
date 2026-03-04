@@ -32,6 +32,7 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 - **Image input support**: Telegram photo messages are passed to the model as image content
 - **Voice message transcription**: Telegram voice memos are transcribed via Whisper-compatible endpoints
 - **Long-term memory**: Markdown-backed memory store with `memory_save` and `memory_search`
+- **On-demand memory recall**: `MEMORY.md` is always in prompt; daily session files are accessed via `memory_search` + `memory_get`
 - **Cron scheduler**: One-shot and recurring tasks via `cron_add`, `cron_list`, and `cron_remove`
 - **Python skills**: Drop a `.py` file into `skills/` and it is auto-registered as a tool
 - **Web chat**: Basic browser interface (localhost)
@@ -39,9 +40,9 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
 ### Built-in tools
 
-- File tools: `read_file`, `write_file`, `file_store`, `list_directory`
+- File tools: `read_file`, `write_file`, `extract_pdf`, `file_copy`, `file_store`, `list_directory`
 - Web tools: `web_search`, `web_fetch`, `research`
-- Memory tools: `memory_save`, `memory_search`
+- Memory tools: `memory_save`, `memory_search`, `memory_get`
 - Automation tools: `cron_add`, `cron_list`, `cron_remove`
 - System tool: `shell_execute`
 
@@ -91,9 +92,9 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 │  │  GET  /definitions               │           │
 │  └──────────────────────────────────┘           │
 │                                                 │
-│  Mounted: soul/, skills/, cron/                 │
-│  Security: read-only rootfs, no-new-privileges, │
-│            cap_drop ALL, RAM/PID limits         │
+│  Mounted: /host_soul, /host_cron, /workspace/*  │
+│  Security: isolated container + token auth +    │
+│            RAM/PID limits                        │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -232,38 +233,35 @@ The bot handles these commands directly:
 ## Project structure
 
 ```
-vaultagent/
-├── src/
-│   ├── main.rs
-│   ├── worker.rs
-│   ├── gateway/
-│   │   ├── IncomingActionsQueue.rs
-│   │   └── com/
-│   │       ├── telegram/
-│   │       └── website/
-│   ├── reasoning/
-│   │   ├── agent.rs
-│   │   ├── llm_interface.rs
-│   │   ├── llmApis/openAI.rs
-│   │   ├── usage.rs
-│   │   └── transcription.rs
-│   ├── skills/
-│   │   ├── mod.rs
-│   │   ├── default_skills/
-│   │   └── python_skill.rs
-│   ├── cron/
-│   │   ├── store.rs
-│   │   └── scheduler.rs
-│   └── soul/
-├── soul/
-├── skills/
-├── cron/
-├── trusted_chat_ids.md
-├── .env.secure.example
-├── .env.docker.example
-├── Dockerfile.worker
-├── docker-compose.yml
-└── Cargo.toml
+VaultAgent/
+├── Readme.md
+├── setup.sh
+├── deploy.sh
+├── data/
+│   ├── container/
+│   │   ├── soul/
+│   │   │   ├── personality.md
+│   │   │   ├── MEMORY.md
+│   │   │   └── memory/
+│   │   ├── cron/jobs.json
+│   │   └── skills/*.py
+│   └── host/
+│       └── constitution.md
+└── vaultagent/
+    ├── Cargo.toml
+    ├── docker-compose.yml
+    ├── Dockerfile.worker
+    ├── .env.secure.example
+    ├── .env.docker.example
+    ├── trusted_chat_ids.md
+    └── src/
+        ├── main.rs
+        ├── worker.rs
+        ├── gateway/
+        ├── reasoning/
+        ├── skills/
+        ├── cron/
+        └── soul/
 ```
 
 ## License
