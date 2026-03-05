@@ -67,6 +67,70 @@ impl GitHubSkill {
         Ok((owner, repo))
     }
 
+    fn owner_repo_and_url_for_clone(
+        &self,
+        arguments: &Value,
+    ) -> Result<(String, String, String), String> {
+        let owner = arguments
+            .get("owner")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let repo = arguments
+            .get("repo")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        let clone_url = arguments
+            .get("clone_url")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
+
+        if !owner.is_empty() && !repo.is_empty() {
+            let raw =
+                clone_url.unwrap_or_else(|| format!("https://github.com/{}/{}.git", owner, repo));
+            let repo_url = canonicalize_clone_url(&raw)
+                .trim_end_matches('/')
+                .to_string();
+
+            if let Some((parsed_owner, parsed_repo)) = parse_owner_repo_from_clone_url(&repo_url) {
+                if !parsed_owner.eq_ignore_ascii_case(&owner)
+                    || !parsed_repo.eq_ignore_ascii_case(&repo)
+                {
+                    return Err(format!(
+                        "clone_url points to '{}/{}' but owner/repo is '{}/{}'.",
+                        parsed_owner, parsed_repo, owner, repo
+                    ));
+                }
+            }
+
+            return Ok((owner, repo, repo_url));
+        }
+
+        if let Some(repo_url) = clone_url {
+            let canonical = canonicalize_clone_url(&repo_url);
+            if let Some((parsed_owner, parsed_repo)) = parse_owner_repo_from_clone_url(&canonical) {
+                return Ok((
+                    parsed_owner,
+                    parsed_repo,
+                    canonical.trim_end_matches('/').to_string(),
+                ));
+            }
+            return Err(
+                "Could not parse owner/repo from clone_url. Provide owner+repo explicitly."
+                    .to_string(),
+            );
+        }
+
+        Err("For clone_repo you must provide either owner+repo or clone_url.".to_string())
+    }
+
     fn auth_request(
         &self,
         env: &GithubEnv,
@@ -107,6 +171,65 @@ impl GitHubSkill {
         }
     }
 
+    async fn diagnose_repo_access(&self, env: &GithubEnv, owner: &str, repo: &str) -> String {
+        let url = format!("{}/repos/{}/{}", env.api_base, owner, repo);
+        let req = self.auth_request(env, reqwest::Method::GET, &url);
+
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let scopes = resp
+                    .headers()
+                    .get("x-oauth-scopes")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+
+                if status.is_success() {
+                    if scopes.is_empty() {
+                        return "GitHub API preflight succeeded: token can access this repo."
+                            .to_string();
+                    }
+                    return format!(
+                        "GitHub API preflight succeeded: token can access this repo. Scopes: {}",
+                        scopes
+                    );
+                }
+
+                let body = resp.text().await.unwrap_or_default();
+                let message = extract_github_error_message(&body)
+                    .or_else(|| first_non_empty_line(&body).map(|s| s.to_string()))
+                    .unwrap_or_else(|| "no details".to_string());
+
+                let status_hint = match status.as_u16() {
+                    401 => "token invalid or expired",
+                    403 => "token lacks required permissions or org SSO authorization is missing",
+                    404 => "repo does not exist or token has no access to private repo",
+                    _ => "unexpected API status",
+                };
+
+                if scopes.is_empty() {
+                    format!(
+                        "GitHub API preflight failed with {} ({}): {}",
+                        status.as_u16(),
+                        status_hint,
+                        message
+                    )
+                } else {
+                    format!(
+                        "GitHub API preflight failed with {} ({}): {} | Scopes: {}",
+                        status.as_u16(),
+                        status_hint,
+                        message,
+                        scopes
+                    )
+                }
+            }
+            Err(err) => format!("GitHub API preflight request failed: {}", err),
+        }
+    }
+
     async fn run_git_command(
         &self,
         extra_header: &str,
@@ -133,12 +256,62 @@ impl GitHubSkill {
         Ok((code, stdout, stderr))
     }
 
+    async fn run_git_plain_command(
+        &self,
+        args: &[String],
+    ) -> Result<(i32, String, String), String> {
+        let mut cmd = Command::new("git");
+        cmd.args(args);
+
+        let output =
+            match tokio::time::timeout(std::time::Duration::from_secs(120), cmd.output()).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(err)) => return Err(format!("Failed to run git: {}", err)),
+                Err(_) => return Err("git command timed out after 120 seconds".to_string()),
+            };
+
+        let code = output.status.code().unwrap_or(-1);
+        let stdout = truncate(&String::from_utf8_lossy(&output.stdout), 8000);
+        let stderr = truncate(&String::from_utf8_lossy(&output.stderr), 4000);
+
+        Ok((code, stdout, stderr))
+    }
+
+    async fn resolve_git_username(&self, env: &GithubEnv) -> Option<String> {
+        let url = format!("{}/user", env.api_base);
+        let req = self.auth_request(env, reqwest::Method::GET, &url);
+
+        let response = req.send().await.ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+
+        let user = response.json::<GithubUserResponse>().await.ok()?;
+        let login = user.login.trim();
+        if login.is_empty() {
+            None
+        } else {
+            Some(login.to_string())
+        }
+    }
+
     async fn run_git_with_fallback(
         &self,
         token: &str,
+        username_hint: Option<&str>,
         args: &[String],
     ) -> Result<(i32, String, String, String), String> {
-        let strategies = vec![
+        let mut strategies = Vec::new();
+        if let Some(username) = username_hint {
+            let u = username.trim();
+            if !u.is_empty() {
+                strategies.push(GitAuthConfig {
+                    label: format!("basic({})", u),
+                    extra_header: basic_auth_header(u, token),
+                });
+            }
+        }
+        strategies.extend([
             GitAuthConfig {
                 label: "basic(x-access-token)".to_string(),
                 extra_header: basic_auth_header("x-access-token", token),
@@ -151,7 +324,7 @@ impl GitHubSkill {
                 label: "bearer".to_string(),
                 extra_header: format!("AUTHORIZATION: bearer {}", token),
             },
-        ];
+        ]);
 
         let mut failures = Vec::new();
 
@@ -166,7 +339,7 @@ impl GitHubSkill {
                         "{} -> exit {}: {}",
                         strategy.label,
                         exit_code,
-                        first_non_empty_line(&stderr).unwrap_or("unknown git error")
+                        best_error_line(&stderr).unwrap_or("unknown git error")
                     ));
                 }
                 Err(err) => failures.push(format!("{} -> {}", strategy.label, err)),
@@ -175,6 +348,85 @@ impl GitHubSkill {
 
         Err(format!(
             "git authentication failed for all strategies. {}",
+            failures.join(" | ")
+        ))
+    }
+
+    async fn run_git_clone_with_url_auth(
+        &self,
+        repo_url: &str,
+        git_ref: Option<&str>,
+        clone_dir: &Path,
+        token: &str,
+        username_hint: Option<&str>,
+    ) -> Result<(i32, String, String, String), String> {
+        let mut clone_urls: Vec<(String, String)> = Vec::new();
+
+        if let Some(username) = username_hint {
+            let u = username.trim();
+            if !u.is_empty() {
+                if let Ok(url) = url_with_basic_auth(repo_url, u, token) {
+                    clone_urls.push((format!("url-basic({})", u), url));
+                }
+            }
+        }
+
+        if let Ok(url) = url_with_basic_auth(repo_url, "x-access-token", token) {
+            clone_urls.push(("url-basic(x-access-token)".to_string(), url));
+        }
+
+        if let Ok(url) = url_with_basic_auth(repo_url, "git", token) {
+            clone_urls.push(("url-basic(git)".to_string(), url));
+        }
+
+        let mut failures = Vec::new();
+        let clone_dir_str = clone_dir.to_string_lossy().to_string();
+
+        for (label, auth_url) in clone_urls {
+            let _ = fs::remove_dir_all(clone_dir);
+
+            let mut args = vec!["clone".to_string()];
+            if let Some(r) = git_ref {
+                args.push("--branch".to_string());
+                args.push(r.to_string());
+                args.push("--single-branch".to_string());
+            }
+            args.push(auth_url);
+            args.push(clone_dir_str.clone());
+
+            match self.run_git_plain_command(&args).await {
+                Ok((exit_code, stdout, stderr)) => {
+                    let safe_stdout = redact_secret(&stdout, token);
+                    let safe_stderr = redact_secret(&stderr, token);
+
+                    if exit_code == 0 {
+                        let _ = self
+                            .run_git_plain_command(&[
+                                "-C".to_string(),
+                                clone_dir_str.clone(),
+                                "remote".to_string(),
+                                "set-url".to_string(),
+                                "origin".to_string(),
+                                repo_url.to_string(),
+                            ])
+                            .await;
+
+                        return Ok((exit_code, safe_stdout, safe_stderr, label));
+                    }
+
+                    failures.push(format!(
+                        "{} -> exit {}: {}",
+                        label,
+                        exit_code,
+                        best_error_line(&safe_stderr).unwrap_or("unknown git error")
+                    ));
+                }
+                Err(err) => failures.push(format!("{} -> {}", label, err)),
+            }
+        }
+
+        Err(format!(
+            "git clone with URL auth failed for all strategies. {}",
             failures.join(" | ")
         ))
     }
@@ -234,10 +486,31 @@ impl GitHubSkill {
             .await
             .map_err(|e| format!("worker /workspace/write request failed: {}", e))?;
 
-        let payload: WorkspaceWriteResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("worker /workspace/write invalid response: {}", e))?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(|e| {
+            format!(
+                "worker /workspace/write failed to read response body: {}",
+                e
+            )
+        })?;
+        let body_text = String::from_utf8_lossy(&body).to_string();
+
+        if !status.is_success() {
+            return Err(format!(
+                "worker /workspace/write HTTP {}: {}",
+                status.as_u16(),
+                truncate(&body_text, 500)
+            ));
+        }
+
+        let payload: WorkspaceWriteResponse = serde_json::from_slice(&body).map_err(|e| {
+            format!(
+                "worker /workspace/write invalid JSON (HTTP {}): {} | body: {}",
+                status.as_u16(),
+                e,
+                truncate(&body_text, 500)
+            )
+        })?;
 
         if !payload.ok {
             return Err(payload
@@ -254,7 +527,7 @@ impl GitHubSkill {
         env: &GithubEnv,
         temp_root: &Path,
     ) -> Result<Value, String> {
-        let (owner, repo) = self.owner_repo_from_args(arguments)?;
+        let (owner, repo, repo_url) = self.owner_repo_and_url_for_clone(arguments)?;
 
         let default_destination = format!("repos/{}-{}", owner, repo);
         let destination_input = arguments
@@ -264,16 +537,6 @@ impl GitHubSkill {
 
         let destination_rel = sanitize_workspace_relative_path(destination_input)?;
         let destination_abs = format!("/workspace/{}", destination_rel);
-
-        let repo_url = arguments
-            .get("clone_url")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("https://github.com/{}/{}.git", owner, repo))
-            .trim_end_matches('/')
-            .to_string();
 
         let git_ref = arguments
             .get("git_ref")
@@ -287,13 +550,7 @@ impl GitHubSkill {
             .and_then(Value::as_bool)
             .unwrap_or(true);
 
-        if update_if_exists {
-            let cleanup_cmd = format!("rm -rf {}", shell_single_quote(&destination_abs));
-            let cleanup_result = self
-                .worker_execute_skill("shell_execute", json!({ "command": cleanup_cmd }))
-                .await?;
-            ensure_tool_ok(&cleanup_result)?;
-        } else {
+        if !update_if_exists {
             let check_cmd = format!(
                 "if [ -e {} ]; then echo EXISTS; else echo MISSING; fi",
                 shell_single_quote(&destination_abs)
@@ -315,23 +572,114 @@ impl GitHubSkill {
         }
 
         let clone_dir = temp_root.join("repo");
-        let mut clone_args = vec!["clone".to_string()];
+        let git_username = self.resolve_git_username(env).await;
+        let clone_dir_str = clone_dir.to_string_lossy().to_string();
+        let mut plain_clone_args = vec!["clone".to_string()];
         if let Some(r) = &git_ref {
-            clone_args.push("--branch".to_string());
-            clone_args.push(r.clone());
-            clone_args.push("--single-branch".to_string());
+            plain_clone_args.push("--branch".to_string());
+            plain_clone_args.push(r.clone());
+            plain_clone_args.push("--single-branch".to_string());
         }
-        clone_args.push(repo_url.clone());
-        clone_args.push(clone_dir.to_string_lossy().to_string());
+        plain_clone_args.push(repo_url.clone());
+        plain_clone_args.push(clone_dir_str.clone());
 
-        let (exit_code, clone_stdout, clone_stderr, auth_strategy) =
-            self.run_git_with_fallback(&env.token, &clone_args).await?;
+        let (exit_code, clone_stdout, clone_stderr, auth_strategy) = match self
+            .run_git_plain_command(&plain_clone_args)
+            .await
+        {
+            Ok((exit_code, stdout, stderr)) if exit_code == 0 => {
+                (exit_code, stdout, stderr, "none".to_string())
+            }
+            Ok((exit_code, _stdout, stderr)) => {
+                let no_auth_failure = format!(
+                    "exit {}: {}",
+                    exit_code,
+                    best_error_line(&stderr).unwrap_or("unknown git error")
+                );
+                match self
+                    .run_git_clone_with_url_auth(
+                        &repo_url,
+                        git_ref.as_deref(),
+                        &clone_dir,
+                        &env.token,
+                        git_username.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(url_auth_err) => {
+                        match self
+                            .run_git_with_fallback(
+                                &env.token,
+                                git_username.as_deref(),
+                                &plain_clone_args,
+                            )
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(header_err) => {
+                                let api_diagnosis =
+                                    self.diagnose_repo_access(env, &owner, &repo).await;
+                                return Err(format!(
+                                    "git clone failed. no-auth: {} | url auth: {} | header auth: {} | {}",
+                                    no_auth_failure, url_auth_err, header_err, api_diagnosis
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let no_auth_failure = err;
+                match self
+                    .run_git_clone_with_url_auth(
+                        &repo_url,
+                        git_ref.as_deref(),
+                        &clone_dir,
+                        &env.token,
+                        git_username.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(url_auth_err) => {
+                        match self
+                            .run_git_with_fallback(
+                                &env.token,
+                                git_username.as_deref(),
+                                &plain_clone_args,
+                            )
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(header_err) => {
+                                let api_diagnosis =
+                                    self.diagnose_repo_access(env, &owner, &repo).await;
+                                return Err(format!(
+                                    "git clone failed. no-auth: {} | url auth: {} | header auth: {} | {}",
+                                    no_auth_failure, url_auth_err, header_err, api_diagnosis
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
         if exit_code != 0 {
             return Err(format!(
                 "git clone failed (exit {}): {}",
                 exit_code,
-                first_non_empty_line(&clone_stderr).unwrap_or("unknown git clone error")
+                best_error_line(&clone_stderr).unwrap_or("unknown git clone error")
             ));
+        }
+
+        if update_if_exists {
+            let cleanup_cmd = format!("rm -rf {}", shell_single_quote(&destination_abs));
+            let cleanup_result = self
+                .worker_execute_skill("shell_execute", json!({ "command": cleanup_cmd }))
+                .await?;
+            ensure_tool_ok(&cleanup_result)?;
         }
 
         let files = collect_repo_files(&clone_dir)?;
@@ -378,12 +726,17 @@ impl GitHubSkill {
 
         match result {
             Ok(v) => v.to_string(),
-            Err(err) => json!({
-                "ok": false,
-                "error": err,
-                "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
-            })
-            .to_string(),
+            Err(err) => {
+                let (error_type, hint) = classify_clone_error(&err);
+                json!({
+                    "ok": false,
+                    "error_type": error_type,
+                    "error": err,
+                    "hint": hint,
+                    "retry_with_shell_execute_recommended": false,
+                })
+                .to_string()
+            }
         }
     }
 }
@@ -396,6 +749,11 @@ struct GithubEnv {
 struct GitAuthConfig {
     label: String,
     extra_header: String,
+}
+
+#[derive(Deserialize)]
+struct GithubUserResponse {
+    login: String,
 }
 
 #[derive(Deserialize)]
@@ -418,7 +776,7 @@ impl Skill for GitHubSkill {
         LlmToolDefinition {
             name: "github".to_string(),
             description: Some(
-                "Interact with GitHub using host-side secrets. Supports REST API actions and cloning repos into Docker /workspace via worker file API."
+                "Use for all GitHub tasks with host-side secrets. IMPORTANT: when the user asks to clone a GitHub repo (for example text containing 'git clone' or a github.com URL), prefer action='clone_repo' instead of shell_execute so GITHUB_TOKEN is used."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -436,15 +794,15 @@ impl Skill for GitHubSkill {
                             "get_pull_request",
                             "clone_repo"
                         ],
-                        "description": "GitHub action to run."
+                        "description": "GitHub action to run. For git clone requests use clone_repo."
                     },
                     "owner": {
                         "type": "string",
-                        "description": "Repository owner/org (required for repo-specific actions)."
+                        "description": "Repository owner/org (required for repo-specific actions; optional for clone_repo if clone_url is provided)."
                     },
                     "repo": {
                         "type": "string",
-                        "description": "Repository name (required for repo-specific actions)."
+                        "description": "Repository name (required for repo-specific actions; optional for clone_repo if clone_url is provided)."
                     },
                     "issue_number": {
                         "type": "integer",
@@ -485,7 +843,7 @@ impl Skill for GitHubSkill {
                     },
                     "clone_url": {
                         "type": "string",
-                        "description": "For clone_repo: optional full git clone URL. Default: https://github.com/<owner>/<repo>.git"
+                        "description": "For clone_repo: full git clone URL (supports web/SSH URLs and normalizes to clone URL). If owner/repo are missing, they are parsed from this URL. Default when omitted: https://github.com/<owner>/<repo>.git"
                     },
                     "update_if_exists": {
                         "type": "boolean",
@@ -756,13 +1114,154 @@ fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('"', "\\\"").replace('\'', "'\\''"))
 }
 
+fn canonicalize_clone_url(url: &str) -> String {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        return canonicalize_clone_url(&format!(
+            "https://github.com/{}",
+            rest.trim_start_matches('/')
+        ));
+    }
+    if let Some(rest) = trimmed.strip_prefix("ssh://git@github.com/") {
+        return canonicalize_clone_url(&format!(
+            "https://github.com/{}",
+            rest.trim_start_matches('/')
+        ));
+    }
+
+    if let Ok(mut parsed) = reqwest::Url::parse(trimmed) {
+        let _ = parsed.set_scheme("https");
+        parsed.set_fragment(None);
+
+        if parsed
+            .host_str()
+            .map(|h| h.eq_ignore_ascii_case("github.com"))
+            .unwrap_or(false)
+        {
+            let parts: Vec<String> = parsed
+                .path_segments()
+                .map(|segments| {
+                    segments
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default();
+
+            if parts.len() >= 2 {
+                let owner = parts[0].trim();
+                let repo = parts[1].trim().trim_end_matches(".git");
+                if !owner.is_empty() && !repo.is_empty() {
+                    return format!("https://github.com/{}/{}.git", owner, repo);
+                }
+            }
+        }
+
+        parsed.set_query(None);
+        return parsed.to_string().trim_end_matches('/').to_string();
+    }
+
+    trimmed.to_string()
+}
+
+fn parse_owner_repo_from_clone_url(url: &str) -> Option<(String, String)> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path_owned = if let Some(after_host) = trimmed.strip_prefix("git@github.com:") {
+        after_host.to_string()
+    } else if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        parsed.path().trim_start_matches('/').to_string()
+    } else {
+        trimmed.trim_start_matches('/').to_string()
+    };
+
+    let mut parts = path_owned.split('/').filter(|s| !s.is_empty());
+    let owner = parts.next()?.trim().to_string();
+    let repo_raw = parts.next()?.trim().to_string();
+    let repo = repo_raw
+        .strip_suffix(".git")
+        .unwrap_or(repo_raw.as_str())
+        .trim()
+        .to_string();
+
+    if owner.is_empty() || repo.is_empty() {
+        None
+    } else {
+        Some((owner, repo))
+    }
+}
+
+fn url_with_basic_auth(repo_url: &str, username: &str, token: &str) -> Result<String, String> {
+    let mut parsed = reqwest::Url::parse(repo_url)
+        .map_err(|e| format!("Invalid clone_url '{}': {}", repo_url, e))?;
+    parsed
+        .set_username(username)
+        .map_err(|_| "Failed to set username on clone URL".to_string())?;
+    parsed
+        .set_password(Some(token))
+        .map_err(|_| "Failed to set password on clone URL".to_string())?;
+    Ok(parsed.to_string())
+}
+
 fn basic_auth_header(username: &str, token: &str) -> String {
     let basic = base64::engine::general_purpose::STANDARD.encode(format!("{username}:{token}"));
     format!("AUTHORIZATION: basic {}", basic)
 }
 
+fn extract_github_error_message(body: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<Value>(body).ok()?;
+    parsed
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn redact_secret(s: &str, secret: &str) -> String {
+    if secret.is_empty() {
+        s.to_string()
+    } else {
+        s.replace(secret, "***")
+    }
+}
+
 fn first_non_empty_line(s: &str) -> Option<&str> {
     s.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn best_error_line(s: &str) -> Option<&str> {
+    // Git often writes a progress line first ("Cloning into ...") and the
+    // actionable cause later ("fatal: ..."). Prefer the most useful line.
+    let lines: Vec<&str> = s
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    for line in &lines {
+        let lower = line.to_lowercase();
+        if lower.starts_with("fatal:")
+            || lower.starts_with("error:")
+            || lower.contains("permission denied")
+            || lower.contains("repository not found")
+            || lower.contains("authentication failed")
+        {
+            return Some(line);
+        }
+    }
+
+    lines.last().copied()
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
@@ -770,5 +1269,121 @@ fn truncate(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}...\\n[truncated, {} bytes]", &s[..max_len], s.len())
+    }
+}
+
+fn classify_clone_error(err: &str) -> (&'static str, &'static str) {
+    let lower = err.to_lowercase();
+
+    if (lower.contains("worker /workspace/write") && lower.contains("http 413"))
+        || lower.contains("payload too large")
+        || lower.contains("failed to buffer the request body")
+    {
+        return (
+            "worker_workspace_write_payload_too_large",
+            "Worker rejected a large file upload while copying the cloned repo into /workspace. Increase worker request body limit (already patched in recent version) and restart worker/service.",
+        );
+    }
+
+    if lower.contains("worker /workspace/write") {
+        return (
+            "worker_workspace_write_failed",
+            "Cloning on host likely succeeded, but copying files into docker /workspace failed. Check worker /workspace/write endpoint logs and worker token/path configuration.",
+        );
+    }
+
+    if lower.contains("github api preflight failed with 401")
+        || lower.contains("token invalid or expired")
+    {
+        return (
+            "token_invalid_or_expired",
+            "GITHUB_TOKEN is invalid or expired. Create a new token and update .env.secure.",
+        );
+    }
+
+    if lower.contains("github api preflight failed with 403")
+        || lower.contains("sso")
+        || lower.contains("lacks required permissions")
+    {
+        return (
+            "token_scope_or_sso_problem",
+            "Token exists but lacks required permissions or SSO authorization. For private repos grant Contents: Read and authorize the token for org SSO.",
+        );
+    }
+
+    if lower.contains("github api preflight failed with 404")
+        || (lower.contains("requested url returned error: 403")
+            && lower.contains("authentication failed"))
+    {
+        return (
+            "repo_access_denied_or_not_found",
+            "Token cannot access this repository (or owner/repo is wrong). For collaborator repos across different owners, use a Classic PAT from a dedicated bot account (repo scope), then verify repo access and org SSO authorization.",
+        );
+    }
+
+    if lower.contains("invalid clone_url") || lower.contains("could not parse owner/repo") {
+        return (
+            "invalid_clone_url",
+            "clone_url format is invalid. Use https://github.com/<owner>/<repo>.git (or provide owner+repo).",
+        );
+    }
+
+    (
+        "clone_failed_unknown",
+        "Check GITHUB_TOKEN, repo permissions, org SSO authorization, and clone_url format.",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        best_error_line, canonicalize_clone_url, classify_clone_error,
+        parse_owner_repo_from_clone_url,
+    };
+
+    #[test]
+    fn canonicalizes_ssh_url() {
+        let got = canonicalize_clone_url("git@github.com:octocat/hello-world.git");
+        assert_eq!(got, "https://github.com/octocat/hello-world.git");
+    }
+
+    #[test]
+    fn canonicalizes_web_tree_url() {
+        let got = canonicalize_clone_url("https://github.com/octocat/hello-world/tree/main");
+        assert_eq!(got, "https://github.com/octocat/hello-world.git");
+    }
+
+    #[test]
+    fn parses_owner_repo_from_web_url() {
+        let got =
+            parse_owner_repo_from_clone_url("https://github.com/octocat/hello-world/tree/main");
+        assert_eq!(
+            got,
+            Some(("octocat".to_string(), "hello-world".to_string()))
+        );
+    }
+
+    #[test]
+    fn best_error_line_prefers_fatal_over_progress() {
+        let stderr = "Cloning into '/tmp/repo'...\nfatal: Repository not found.\n";
+        assert_eq!(
+            best_error_line(stderr),
+            Some("fatal: Repository not found.")
+        );
+    }
+
+    #[test]
+    fn classify_clone_error_detects_repo_access_problem() {
+        let (error_type, _) = classify_clone_error(
+            "git clone failed ... The requested URL returned error: 403 ... GitHub API preflight failed with 404 ...",
+        );
+        assert_eq!(error_type, "repo_access_denied_or_not_found");
+    }
+
+    #[test]
+    fn classify_clone_error_detects_worker_write_issue() {
+        let (error_type, _) =
+            classify_clone_error("worker /workspace/write invalid JSON (HTTP 413): body too large");
+        assert_eq!(error_type, "worker_workspace_write_payload_too_large");
     }
 }

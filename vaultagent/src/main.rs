@@ -115,43 +115,32 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cron_store = Arc::new(CronStore::load(Path::new(&cron_dir)));
 
     // ── LLM ─────────────────────────────────────────────
-    // Try to initialise all available providers.
-    // LLM_PROVIDER ("anthropic" | "openai") selects the *default* backend;
-    // the others are still available and switchable via /models.
-    let preferred = std::env::var("LLM_PROVIDER")
-        .unwrap_or_default()
-        .to_lowercase();
-
+    // Auto-enable all configured providers.
+    // The first available backend becomes default; users can switch with /models.
     let mut backends: Vec<Arc<dyn LlmInterface>> = Vec::new();
 
-    let openai_result = OpenAiCompatibleClient::from_env();
-    let anthropic_result = AnthropicClient::from_env();
+    if let Ok(client) = OpenAiCompatibleClient::from_env() {
+        if backends.is_empty() {
+            println!(
+                "[Main][LLM] Enabled provider: {} (default)",
+                client.provider_name()
+            );
+        } else {
+            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
+        }
+        backends.push(Arc::new(client));
+    }
 
-    // Insert preferred provider first so it becomes index 0 (= default).
-    if preferred == "anthropic" {
-        if let Ok(client) = anthropic_result {
+    if let Ok(client) = AnthropicClient::from_env() {
+        if backends.is_empty() {
             println!(
                 "[Main][LLM] Enabled provider: {} (default)",
                 client.provider_name()
             );
-            backends.push(Arc::new(client));
-        }
-        if let Ok(client) = openai_result {
+        } else {
             println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-            backends.push(Arc::new(client));
         }
-    } else {
-        if let Ok(client) = openai_result {
-            println!(
-                "[Main][LLM] Enabled provider: {} (default)",
-                client.provider_name()
-            );
-            backends.push(Arc::new(client));
-        }
-        if let Ok(client) = anthropic_result {
-            println!("[Main][LLM] Enabled provider: {}", client.provider_name());
-            backends.push(Arc::new(client));
-        }
+        backends.push(Arc::new(client));
     }
 
     let llm: Option<Arc<dyn LlmInterface>> = if backends.is_empty() {
@@ -316,7 +305,11 @@ async fn handle_global_command(text: &str, agent: &Agent) -> Option<String> {
     match text {
         "/new" => {
             agent.clear_history().await;
-            Some("🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string())
+            let mut reply = "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string();
+            if let Some(model) = agent.active_model_label() {
+                reply.push_str(&format!("\nAktives Modell: {}", model));
+            }
+            Some(reply)
         }
         "/window" => Some(agent.context_window_info().await),
         "/tools" => {

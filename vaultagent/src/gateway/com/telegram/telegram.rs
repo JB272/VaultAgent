@@ -7,13 +7,13 @@ use crate::reasoning::agent::Agent;
 use crate::reasoning::llm_interface::LlmInterface;
 use crate::reasoning::transcription::TranscriptionService;
 use async_trait::async_trait;
-use base64::Engine;
 use axum::{
     Router,
     extract::{Json, State},
     http::StatusCode,
     routing::{get, post},
 };
+use base64::Engine;
 use reqwest::Client;
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
@@ -892,12 +892,14 @@ async fn handle_command(text: &str, bot: &TelegramBot, _chat_id: i64) -> Option<
     }
 
     if text == "/new" {
+        let mut reply = "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string();
         if let Some(ref agent) = bot.agent {
             agent.clear_history().await;
+            if let Some(model) = agent.active_model_label() {
+                reply.push_str(&format!("\nAktives Modell: <code>{model}</code>"));
+            }
         }
-        return Some(CommandResult::Text(
-            "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string(),
-        ));
+        return Some(CommandResult::Text(reply));
     }
 
     if text == "/window" {

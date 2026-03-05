@@ -85,6 +85,18 @@ impl Agent {
             || t.contains("can't install")
     }
 
+    fn preview_text(text: &str, max_chars: usize) -> String {
+        let mut out = String::new();
+        for (idx, ch) in text.chars().enumerate() {
+            if idx >= max_chars {
+                out.push_str("...[truncated]");
+                return out;
+            }
+            out.push(ch);
+        }
+        out
+    }
+
     /// Accepts NO_REPLY even if the model adds surrounding text accidentally.
     fn is_no_reply_signal(text: &str) -> bool {
         let trimmed = text.trim();
@@ -359,6 +371,13 @@ impl Agent {
     /// Returns the names of all registered skills (used by the /tools command).
     pub fn skill_names(&self) -> Vec<String> {
         self.skills.skill_names()
+    }
+
+    /// Returns active provider/model label for status messages.
+    pub fn active_model_label(&self) -> Option<String> {
+        self.llm
+            .as_ref()
+            .map(|llm| format!("{}/{}", llm.provider_name(), llm.current_model()))
     }
 
     /// Clears the shared conversation history. Called by /new.
@@ -771,23 +790,27 @@ impl Agent {
                     return "⏹ Stopped.".to_string();
                 }
 
-                let result = match self
-                    .skills
-                    .execute(&tool_call.name, &tool_call.arguments)
-                    .await
-                {
+                let tool_name = tool_call.name.clone();
+                let args_preview =
+                    Self::preview_text(&tool_call.arguments.to_string(), 500).replace('\n', "\\n");
+                println!("[Agent][Tool] Calling {} args={}", tool_name, args_preview);
+
+                let result = match self.skills.execute(&tool_name, &tool_call.arguments).await {
                     Some(result) => result,
                     None => json!({
                         "ok": false,
-                        "error": format!("Unknown tool: {}", tool_call.name),
+                        "error": format!("Unknown tool: {}", tool_name),
                     })
                     .to_string(),
                 };
 
+                let result_preview = Self::preview_text(&result, 3000).replace('\n', "\\n");
+                println!("[Agent][Tool] Result {} => {}", tool_name, result_preview);
+
                 messages.push(LlmMessage {
                     role: LlmRole::Tool,
                     content: LlmMessageContent::Text(result),
-                    name: Some(tool_call.name),
+                    name: Some(tool_name),
                     tool_call_id: tool_call.id,
                     tool_calls: Vec::new(),
                 });

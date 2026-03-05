@@ -28,6 +28,13 @@ set_kv() {
     fi
 }
 
+remove_kv() {
+    local file="$1"
+    local key="$2"
+    # Works with BSD/macOS sed
+    sed -i '' "/^${key}=/d" "$file"
+}
+
 prompt() {
     local label="$1"
     local default="${2:-}"
@@ -49,27 +56,19 @@ while [ -z "$TELEGRAM_BOT_TOKEN" ]; do
     TELEGRAM_BOT_TOKEN="$(prompt "Telegram bot token (required)")"
 done
 
-LLM_PROVIDER="$(prompt "LLM provider (openai|anthropic)" "openai")"
-if [ "$LLM_PROVIDER" != "openai" ] && [ "$LLM_PROVIDER" != "anthropic" ]; then
-    echo "Invalid provider. Using openai."
-    LLM_PROVIDER="openai"
-fi
-
-if [ "$LLM_PROVIDER" = "openai" ]; then
-    OPENAI_API_KEY="$(prompt "OpenAI API key")"
-    while [ -z "$OPENAI_API_KEY" ]; do
-        OPENAI_API_KEY="$(prompt "OpenAI API key (required)")"
-    done
+OPENAI_API_KEY="$(prompt "OpenAI API key (optional)")"
+if [ -n "$OPENAI_API_KEY" ]; then
     OPENAI_BASE_URL="$(prompt "OpenAI base URL" "https://api.openai.com/v1")"
     OPENAI_MODEL="$(prompt "OpenAI model" "gpt-4o-mini")"
 fi
 
-if [ "$LLM_PROVIDER" = "anthropic" ]; then
-    ANTHROPIC_API_KEY="$(prompt "Anthropic API key")"
-    while [ -z "$ANTHROPIC_API_KEY" ]; do
-        ANTHROPIC_API_KEY="$(prompt "Anthropic API key (required)")"
-    done
+ANTHROPIC_API_KEY="$(prompt "Anthropic API key (optional)")"
+if [ -n "$ANTHROPIC_API_KEY" ]; then
     ANTHROPIC_MODEL="$(prompt "Anthropic model" "claude-3-5-sonnet-latest")"
+fi
+
+if [ -z "$OPENAI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+    echo "⚠ No LLM API key provided. Bot responses will be disabled until you set one."
 fi
 
 WORKER_TOKEN="$(prompt "Worker token (shared secret)")"
@@ -77,23 +76,27 @@ while [ -z "$WORKER_TOKEN" ]; do
     WORKER_TOKEN="$(prompt "Worker token (required)")"
 done
 
+GITHUB_TOKEN="$(prompt "GitHub token (optional; recommended: Classic PAT from bot account)" "")"
+
 TIMEZONE="$(prompt "Timezone" "Europe/Berlin")"
 
 CHAT_IDS="$(prompt "Telegram chat IDs (comma-separated, blank = allow all)" "")"
 
 # Write .env.secure values
 set_kv "$SECURE_ENV" "TELEGRAM_BOT_TOKEN" "$TELEGRAM_BOT_TOKEN"
-set_kv "$SECURE_ENV" "LLM_PROVIDER" "$LLM_PROVIDER"
 set_kv "$SECURE_ENV" "TIMEZONE" "$TIMEZONE"
 set_kv "$SECURE_ENV" "WORKER_TOKEN" "$WORKER_TOKEN"
+set_kv "$SECURE_ENV" "GITHUB_TOKEN" "$GITHUB_TOKEN"
+remove_kv "$SECURE_ENV" "LLM_PROVIDER"
+remove_kv "$SECURE_ENV" "GITHUB_API_BASE_URL"
 
-if [ "$LLM_PROVIDER" = "openai" ]; then
+if [ -n "$OPENAI_API_KEY" ]; then
     set_kv "$SECURE_ENV" "OPENAI_API_KEY" "$OPENAI_API_KEY"
     set_kv "$SECURE_ENV" "OPENAI_BASE_URL" "$OPENAI_BASE_URL"
     set_kv "$SECURE_ENV" "OPENAI_MODEL" "$OPENAI_MODEL"
 fi
 
-if [ "$LLM_PROVIDER" = "anthropic" ]; then
+if [ -n "$ANTHROPIC_API_KEY" ]; then
     set_kv "$SECURE_ENV" "ANTHROPIC_API_KEY" "$ANTHROPIC_API_KEY"
     set_kv "$SECURE_ENV" "ANTHROPIC_MODEL" "$ANTHROPIC_MODEL"
 fi

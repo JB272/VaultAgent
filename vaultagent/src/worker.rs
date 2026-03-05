@@ -6,7 +6,7 @@
 
 use axum::{
     Router,
-    extract::{Json, State},
+    extract::{DefaultBodyLimit, Json, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
@@ -469,6 +469,8 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
         .route("/execute", post(execute))
         .route("/workspace/read", post(workspace_read))
         .route("/workspace/write", post(workspace_write))
+        // /workspace/write receives base64 JSON payloads; allow larger uploads.
+        .layer(DefaultBodyLimit::max(128 * 1024 * 1024))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
