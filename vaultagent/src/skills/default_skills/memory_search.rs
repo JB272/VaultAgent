@@ -48,8 +48,7 @@ impl Skill for MemorySearchSkill {
             .unwrap_or_default();
 
         if query.trim().is_empty() {
-            return json!({ "ok": false, "error": "Query must not be empty." })
-                .to_string();
+            return json!({ "ok": false, "error": "Query must not be empty." }).to_string();
         }
 
         let results = self.memory.search(query);

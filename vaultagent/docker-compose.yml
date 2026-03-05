@@ -36,17 +36,6 @@ services:
 
     # ── Environment ───────────────────────────────────
     env_file: .env.docker
-    environment:
-      MAILBOX_EMAIL_ADDRESS: ${MAILBOX_EMAIL_ADDRESS:-}
-      MAILBOX_EMAIL_PASSWORD: ${MAILBOX_EMAIL_PASSWORD:-}
-      MAILBOX_IMAP_HOST: ${MAILBOX_IMAP_HOST:-}
-      MAILBOX_IMAP_PORT: ${MAILBOX_IMAP_PORT:-993}
-      MAILBOX_POP3_HOST: ${MAILBOX_POP3_HOST:-}
-      MAILBOX_POP3_PORT: ${MAILBOX_POP3_PORT:-995}
-      MAILBOX_SMTP_HOST: ${MAILBOX_SMTP_HOST:-}
-      MAILBOX_SMTP_PORT: ${MAILBOX_SMTP_PORT:-587}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      GITHUB_API_BASE_URL: ${GITHUB_API_BASE_URL:-https://api.github.com}
 
     # ── Network ───────────────────────────────────────
     # Only expose on localhost — the host orchestrator connects here.

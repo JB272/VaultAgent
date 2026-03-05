@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use crate::reasoning::agent::Agent;
 use crate::reasoning::llm_interface::{LlmInterface, LlmToolDefinition};
+use crate::skills::RemoteSkillProxy;
 use crate::skills::Skill;
 use crate::skills::SkillRegistry;
-use crate::skills::RemoteSkillProxy;
 
 /// Skill: Spawns a focused research subagent.
 ///

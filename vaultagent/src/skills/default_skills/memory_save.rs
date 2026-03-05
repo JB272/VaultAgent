@@ -61,7 +61,11 @@ impl Skill for MemorySaveSkill {
             .and_then(Value::as_str)
             .unwrap_or("daily");
 
-        println!("[MemorySave] Saving to '{}': {}…", storage, &entry[..entry.len().min(80)]);
+        println!(
+            "[MemorySave] Saving to '{}': {}…",
+            storage,
+            &entry[..entry.len().min(80)]
+        );
 
         let result = match storage {
             "long_term" => self.memory.append_long_term(entry).await,

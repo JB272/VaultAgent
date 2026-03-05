@@ -290,7 +290,7 @@ impl Skill for EmailMailboxSkill {
         LlmToolDefinition {
             name: "email_mailbox".to_string(),
             description: Some(
-                "Read and send emails via generic IMAP/POP3/SMTP servers from the Docker worker. \
+                "Read and send emails via generic IMAP/POP3/SMTP servers using host-side mailbox credentials. \
                  Use action=list_inbox/read_email/send_email; set protocol=imap or pop3 for inbox reading."
                     .to_string(),
             ),

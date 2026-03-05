@@ -7,6 +7,7 @@ use crate::reasoning::agent::Agent;
 use crate::reasoning::llm_interface::LlmInterface;
 use crate::reasoning::transcription::TranscriptionService;
 use async_trait::async_trait;
+use base64::Engine;
 use axum::{
     Router,
     extract::{Json, State},
@@ -18,7 +19,6 @@ use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 use std::{collections::HashMap, collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
-use tokio::process::Command;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -27,11 +27,33 @@ pub struct TelegramBot {
     base_url: String,
     webhook_url: Option<String>,
     port: u16,
+    worker_url: String,
+    worker_token: String,
     known_chat_ids: Arc<Mutex<HashSet<i64>>>,
     allowed_chat_ids: Option<HashSet<i64>>,
     transcription: Option<Arc<TranscriptionService>>,
     agent: Option<Arc<Agent>>,
     llm: Option<Arc<dyn LlmInterface>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerWorkspaceReadResponse {
+    ok: bool,
+    #[serde(default)]
+    content_base64: Option<String>,
+    #[serde(default)]
+    size_bytes: Option<usize>,
+    #[serde(default)]
+    truncated: Option<bool>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkerWorkspaceWriteResponse {
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 impl TelegramBot {
@@ -44,6 +66,8 @@ impl TelegramBot {
             base_url,
             webhook_url,
             port,
+            worker_url: String::new(),
+            worker_token: String::new(),
             known_chat_ids: Arc::new(Mutex::new(HashSet::new())),
             allowed_chat_ids: None,
             transcription: None,
@@ -52,41 +76,101 @@ impl TelegramBot {
         }
     }
 
-    async fn read_upload_bytes(
+    async fn worker_workspace_read(
         &self,
         safe_path: &str,
     ) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-        // First try local filesystem (works when host and worker share files).
-        if let Ok(bytes) = tokio::fs::read(safe_path).await {
-            return Ok(bytes);
+        if self.worker_url.trim().is_empty() {
+            return Err(
+                "WORKER_URL is not configured for Telegram file reads (worker bridge disabled)"
+                    .into(),
+            );
         }
 
-        // Fallback: fetch bytes from the running worker container.
-        // This keeps uploads working when /workspace is Docker-only.
-        let container = std::env::var("WORKER_CONTAINER_NAME")
-            .unwrap_or_else(|_| "vaultagent-worker".to_string());
-        let container_path = format!("/workspace/{}", safe_path);
+        let mut req = self
+            .client
+            .post(format!("{}/workspace/read", self.worker_url))
+            .json(&serde_json::json!({
+                "path": safe_path,
+                "max_bytes": 64 * 1024 * 1024
+            }));
 
-        let output = Command::new("docker")
-            .arg("exec")
-            .arg(&container)
-            .arg("cat")
-            .arg(&container_path)
-            .output()
-            .await?;
+        if !self.worker_token.is_empty() {
+            req = req.header("x-worker-token", &self.worker_token);
+        }
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        let response = req.send().await?;
+        let payload: WorkerWorkspaceReadResponse = response.json().await?;
+        if !payload.ok {
+            return Err(payload
+                .error
+                .unwrap_or_else(|| "workspace/read returned ok=false".to_string())
+                .into());
+        }
+
+        if payload.truncated.unwrap_or(false) {
+            let size = payload
+                .size_bytes
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             return Err(format!(
-                "Failed to read file from container {}:{} ({})",
-                container,
-                container_path,
-                stderr.trim()
+                "workspace/read truncated file '{}' (size {} bytes > 64 MiB limit)",
+                safe_path, size
             )
             .into());
         }
 
-        Ok(output.stdout)
+        let b64 = payload
+            .content_base64
+            .ok_or("workspace/read response missing content_base64")?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64.as_bytes())?;
+        Ok(bytes)
+    }
+
+    async fn worker_workspace_write(
+        &self,
+        safe_path: &str,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if self.worker_url.trim().is_empty() {
+            return Err(
+                "WORKER_URL is not configured for Telegram file writes (worker bridge disabled)"
+                    .into(),
+            );
+        }
+
+        let content_base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let mut req = self
+            .client
+            .post(format!("{}/workspace/write", self.worker_url))
+            .json(&serde_json::json!({
+                "path": safe_path,
+                "content_base64": content_base64,
+            }));
+
+        if !self.worker_token.is_empty() {
+            req = req.header("x-worker-token", &self.worker_token);
+        }
+
+        let response = req.send().await?;
+        let payload: WorkerWorkspaceWriteResponse = response.json().await?;
+        if !payload.ok {
+            return Err(payload
+                .error
+                .unwrap_or_else(|| "workspace/write returned ok=false".to_string())
+                .into());
+        }
+
+        Ok(())
+    }
+
+    async fn read_upload_bytes(
+        &self,
+        safe_path: &str,
+    ) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+        // Always read upload files through the worker bridge so host files
+        // cannot be uploaded accidentally.
+        self.worker_workspace_read(safe_path).await
     }
     pub fn is_enabled() -> bool {
         is_token_service_enabled("TELEGRAM_BOT_TOKEN")
@@ -893,11 +977,15 @@ pub async fn setup_telegram(
     incoming_writer: IncomingActionWriter,
     agent: Arc<Agent>,
     llm: Option<Arc<dyn LlmInterface>>,
+    worker_url: String,
+    worker_token: String,
 ) -> Option<TelegramBot> {
     if TelegramBot::is_enabled() {
         if let Some(mut telegram) = TelegramBot::from_env() {
             telegram.agent = Some(agent);
             telegram.llm = llm;
+            telegram.worker_url = worker_url.trim_end_matches('/').to_string();
+            telegram.worker_token = worker_token;
             match telegram.start(incoming_writer).await {
                 Ok(()) => Some(telegram),
                 Err(err) => {
@@ -1000,7 +1088,6 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
             match bot.get_file_path(&largest.file_id).await {
                 Ok(file_path) => match bot.download_file(&file_path).await {
                     Ok(data) => {
-                        use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                         let data_url = format!("data:image/jpeg;base64,{}", b64);
                         println!(
@@ -1036,6 +1123,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
             Ok(file_path) => match bot.download_file(&file_path).await {
                 Ok(data) => {
                     let stored_path = persist_telegram_file(
+                        bot,
                         &data,
                         document.file_name.as_deref(),
                         &document.file_id,
@@ -1166,6 +1254,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
 }
 
 async fn persist_telegram_file(
+    bot: &TelegramBot,
     bytes: &[u8],
     original_name: Option<&str>,
     file_id: &str,
@@ -1178,63 +1267,9 @@ async fn persist_telegram_file(
     let unique = uuid::Uuid::new_v4().to_string();
     let stored_name = format!("{}_{}", unique, safe_name);
     let relative_path = format!("skills/uploads/{}", stored_name);
-
-    let container =
-        std::env::var("WORKER_CONTAINER_NAME").unwrap_or_else(|_| "vaultagent-worker".to_string());
-    let container_path = format!("/workspace/{}", relative_path);
-
-    // Ensure the uploads directory exists inside the container.
-    let mkdir_out = Command::new("docker")
-        .arg("exec")
-        .arg(&container)
-        .arg("mkdir")
-        .arg("-p")
-        .arg("/workspace/skills/uploads")
-        .output()
+    bot.worker_workspace_write(&relative_path, bytes)
         .await
-        .map_err(|e| format!("Failed to create uploads dir in container: {}", e))?;
-    if !mkdir_out.status.success() {
-        return Err(format!(
-            "mkdir in container failed: {}",
-            String::from_utf8_lossy(&mkdir_out.stderr)
-        ));
-    }
-
-    // Pipe the file bytes into the container via `docker exec -i ... tee`.
-    let mut child = Command::new("docker")
-        .arg("exec")
-        .arg("-i")
-        .arg(&container)
-        .arg("tee")
-        .arg(&container_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Failed to spawn docker exec tee: {}", e))?;
-
-    {
-        use tokio::io::AsyncWriteExt;
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or("Failed to open stdin for docker exec")?;
-        stdin
-            .write_all(bytes)
-            .await
-            .map_err(|e| format!("Failed to write bytes to container: {}", e))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|e| format!("Failed to close stdin: {}", e))?;
-    }
-
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("Failed to wait for docker exec: {}", e))?;
-    if !status.success() {
-        return Err(format!("docker exec tee exited with status {}", status));
-    }
+        .map_err(|e| format!("Failed to store upload via worker API: {}", e))?;
 
     Ok(relative_path)
 }

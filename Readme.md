@@ -24,7 +24,7 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
 ### Available now
 
-- **Sandboxed tool execution**: Skills run inside a Docker worker; secrets never enter the sandbox
+- **Sandboxed tool execution**: Most skills run inside a Docker worker; secret-aware skills (for example `email_mailbox`, `github`) run on host and access Docker files via worker API
 - **Telegram bot**: Polling mode and webhook mode
 - **Telegram file uploads**: Receives document uploads (for example PDF/ZIP/TXT), stores them for downstream tool/Python processing
 - **Multi-provider LLM integration**: Supports OpenAI-compatible providers and Anthropic, including runtime model switching
@@ -60,7 +60,7 @@ What is not there yet:
 
 ## Architecture
 
-VaultAgent uses a split-process security model: the host orchestrator handles Telegram, LLM calls, and secrets; all tool execution runs in a sandboxed Docker worker.
+VaultAgent uses a split-process security model: the host orchestrator handles Telegram, LLM calls, and secrets; sandboxed skills run in Docker, while secret-aware host skills use a token-authenticated worker file API bridge.
 
 ```
 ┌────────────────────────────────────────────────┐
@@ -90,6 +90,8 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 │  │  Worker HTTP API (:9100)         │           │
 │  │  POST /execute      run skills   │           │
 │  │  GET  /definitions               │           │
+│  │  POST /workspace/read            │           │
+│  │  POST /workspace/write           │           │
 │  └──────────────────────────────────┘           │
 │                                                 │
 │  Mounted: /host_soul, /host_cron, /workspace/*  │
@@ -103,7 +105,7 @@ VaultAgent uses a split-process security model: the host orchestrator handles Te
 - API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`) exist only on the host
 - Worker is isolated and authenticated with `WORKER_TOKEN`
 - Container runs with reduced privileges and resource limits
-- Only mounted directories (`soul/`, `skills/`, `cron/`) are writable
+- Worker writes are limited to the Docker workspace volume and explicit mounts (`/workspace`, `soul/`, `cron/`)
 
 ## Getting started
 

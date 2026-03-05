@@ -20,11 +20,7 @@ impl UsageCounter {
     }
 
     /// Record one LLM call. Resets counters if the date has changed since last call.
-    pub async fn record(
-        &self,
-        prompt_tokens: Option<u32>,
-        completion_tokens: Option<u32>,
-    ) {
+    pub async fn record(&self, prompt_tokens: Option<u32>, completion_tokens: Option<u32>) {
         let now = today();
         let mut stored = self.date.lock().await;
         if *stored != now {

@@ -1,25 +1,32 @@
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::{Component, Path};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
 use tokio::process::Command;
+use uuid::Uuid;
 
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
 
 pub struct GitHubSkill {
     client: Client,
+    worker_url: String,
+    worker_token: String,
 }
 
 impl GitHubSkill {
-    pub fn new() -> Self {
+    pub fn new(worker_url: String, worker_token: String) -> Self {
         Self {
             client: Client::builder()
                 .user_agent("VaultAgent/1.0")
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
+            worker_url: worker_url.trim_end_matches('/').to_string(),
+            worker_token,
         }
     }
 
@@ -100,25 +107,6 @@ impl GitHubSkill {
         }
     }
 
-    fn git_auth_configs(&self, env: &GithubEnv) -> Vec<GitAuthConfig> {
-        vec![
-            // Common GitHub username aliases for token auth.
-            GitAuthConfig {
-                label: "basic(x-access-token)".to_string(),
-                extra_header: basic_auth_header("x-access-token", &env.token),
-            },
-            GitAuthConfig {
-                label: "basic(git)".to_string(),
-                extra_header: basic_auth_header("git", &env.token),
-            },
-            // Some setups accept bearer auth for git HTTP endpoints.
-            GitAuthConfig {
-                label: "bearer".to_string(),
-                extra_header: format!("AUTHORIZATION: bearer {}", env.token),
-            },
-        ]
-    }
-
     async fn run_git_command(
         &self,
         extra_header: &str,
@@ -147,26 +135,41 @@ impl GitHubSkill {
 
     async fn run_git_with_fallback(
         &self,
-        env: &GithubEnv,
+        token: &str,
         args: &[String],
     ) -> Result<(i32, String, String, String), String> {
+        let strategies = vec![
+            GitAuthConfig {
+                label: "basic(x-access-token)".to_string(),
+                extra_header: basic_auth_header("x-access-token", token),
+            },
+            GitAuthConfig {
+                label: "basic(git)".to_string(),
+                extra_header: basic_auth_header("git", token),
+            },
+            GitAuthConfig {
+                label: "bearer".to_string(),
+                extra_header: format!("AUTHORIZATION: bearer {}", token),
+            },
+        ];
+
         let mut failures = Vec::new();
 
-        for cfg in self.git_auth_configs(env) {
-            match self.run_git_command(&cfg.extra_header, args).await {
+        for strategy in strategies {
+            match self.run_git_command(&strategy.extra_header, args).await {
                 Ok((exit_code, stdout, stderr)) => {
                     if exit_code == 0 {
-                        return Ok((exit_code, stdout, stderr, cfg.label));
+                        return Ok((exit_code, stdout, stderr, strategy.label));
                     }
 
                     failures.push(format!(
                         "{} -> exit {}: {}",
-                        cfg.label,
+                        strategy.label,
                         exit_code,
                         first_non_empty_line(&stderr).unwrap_or("unknown git error")
                     ));
                 }
-                Err(err) => failures.push(format!("{} -> {}", cfg.label, err)),
+                Err(err) => failures.push(format!("{} -> {}", strategy.label, err)),
             }
         }
 
@@ -176,11 +179,82 @@ impl GitHubSkill {
         ))
     }
 
-    async fn clone_repo(&self, arguments: &Value, env: &GithubEnv) -> String {
-        let (owner, repo) = match self.owner_repo_from_args(arguments) {
-            Ok(v) => v,
-            Err(err) => return json!({ "ok": false, "error": err }).to_string(),
-        };
+    async fn worker_execute_skill(&self, name: &str, arguments: Value) -> Result<Value, String> {
+        let mut req = self
+            .client
+            .post(format!("{}/execute", self.worker_url))
+            .json(&json!({ "name": name, "arguments": arguments }));
+
+        if !self.worker_token.is_empty() {
+            req = req.header("x-worker-token", &self.worker_token);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| format!("worker /execute request failed: {}", e))?;
+
+        let payload: WorkerExecuteResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("worker /execute invalid response: {}", e))?;
+
+        if !payload.ok {
+            return Err(payload
+                .error
+                .unwrap_or_else(|| "worker execute returned ok=false".to_string()));
+        }
+
+        let result_raw = payload.result.unwrap_or_else(|| "{}".to_string());
+        match serde_json::from_str::<Value>(&result_raw) {
+            Ok(v) => Ok(v),
+            Err(_) => Ok(json!({ "ok": true, "output": result_raw })),
+        }
+    }
+
+    async fn worker_workspace_write(
+        &self,
+        path: &str,
+        content_base64: &str,
+    ) -> Result<usize, String> {
+        let mut req = self
+            .client
+            .post(format!("{}/workspace/write", self.worker_url))
+            .json(&json!({
+                "path": path,
+                "content_base64": content_base64,
+            }));
+
+        if !self.worker_token.is_empty() {
+            req = req.header("x-worker-token", &self.worker_token);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| format!("worker /workspace/write request failed: {}", e))?;
+
+        let payload: WorkspaceWriteResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("worker /workspace/write invalid response: {}", e))?;
+
+        if !payload.ok {
+            return Err(payload
+                .error
+                .unwrap_or_else(|| "workspace write returned ok=false".to_string()));
+        }
+
+        Ok(payload.bytes_written.unwrap_or(0))
+    }
+
+    async fn clone_repo_inner(
+        &self,
+        arguments: &Value,
+        env: &GithubEnv,
+        temp_root: &Path,
+    ) -> Result<Value, String> {
+        let (owner, repo) = self.owner_repo_from_args(arguments)?;
 
         let default_destination = format!("repos/{}-{}", owner, repo);
         let destination_input = arguments
@@ -188,12 +262,9 @@ impl GitHubSkill {
             .and_then(Value::as_str)
             .unwrap_or(default_destination.as_str());
 
-        let destination_rel = match sanitize_workspace_relative_path(destination_input) {
-            Ok(v) => v,
-            Err(err) => return json!({ "ok": false, "error": err }).to_string(),
-        };
-
+        let destination_rel = sanitize_workspace_relative_path(destination_input)?;
         let destination_abs = format!("/workspace/{}", destination_rel);
+
         let repo_url = arguments
             .get("clone_url")
             .and_then(Value::as_str)
@@ -216,76 +287,103 @@ impl GitHubSkill {
             .and_then(Value::as_bool)
             .unwrap_or(true);
 
-        let exists = tokio::fs::metadata(&destination_abs).await.is_ok();
-
-        if exists {
-            if !update_if_exists {
-                return json!({
-                    "ok": false,
-                    "error": format!("Destination already exists: {}", destination_abs),
-                })
-                .to_string();
-            }
-
-            let mut args = vec![
-                "-C".to_string(),
-                destination_abs.clone(),
-                "pull".to_string(),
-                "--ff-only".to_string(),
-            ];
-            if let Some(r) = &git_ref {
-                args.push("origin".to_string());
-                args.push(r.clone());
-            }
-
-            match self.run_git_with_fallback(env, &args).await {
-                Ok((exit_code, stdout, stderr, auth_strategy)) => json!({
-                    "ok": exit_code == 0,
-                    "action": "clone_repo",
-                    "updated_existing": true,
-                    "path": destination_abs,
-                    "repo_url": repo_url,
-                    "auth_strategy": auth_strategy,
-                    "exit_code": exit_code,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                })
-                .to_string(),
-                Err(err) => json!({
-                    "ok": false,
-                    "error": err,
-                    "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
-                }).to_string(),
-            }
+        if update_if_exists {
+            let cleanup_cmd = format!("rm -rf {}", shell_single_quote(&destination_abs));
+            let cleanup_result = self
+                .worker_execute_skill("shell_execute", json!({ "command": cleanup_cmd }))
+                .await?;
+            ensure_tool_ok(&cleanup_result)?;
         } else {
-            let mut args = vec!["clone".to_string()];
-            if let Some(r) = &git_ref {
-                args.push("--branch".to_string());
-                args.push(r.clone());
-                args.push("--single-branch".to_string());
+            let check_cmd = format!(
+                "if [ -e {} ]; then echo EXISTS; else echo MISSING; fi",
+                shell_single_quote(&destination_abs)
+            );
+            let check_result = self
+                .worker_execute_skill("shell_execute", json!({ "command": check_cmd }))
+                .await?;
+            ensure_tool_ok(&check_result)?;
+            let stdout = check_result
+                .get("stdout")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if stdout.contains("EXISTS") {
+                return Err(format!(
+                    "Destination already exists in docker workspace: {}",
+                    destination_abs
+                ));
             }
-            args.push(repo_url.clone());
-            args.push(destination_abs.clone());
+        }
 
-            match self.run_git_with_fallback(env, &args).await {
-                Ok((exit_code, stdout, stderr, auth_strategy)) => json!({
-                    "ok": exit_code == 0,
-                    "action": "clone_repo",
-                    "updated_existing": false,
-                    "path": destination_abs,
-                    "repo_url": repo_url,
-                    "auth_strategy": auth_strategy,
-                    "exit_code": exit_code,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                })
-                .to_string(),
-                Err(err) => json!({
-                    "ok": false,
-                    "error": err,
-                    "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
-                }).to_string(),
-            }
+        let clone_dir = temp_root.join("repo");
+        let mut clone_args = vec!["clone".to_string()];
+        if let Some(r) = &git_ref {
+            clone_args.push("--branch".to_string());
+            clone_args.push(r.clone());
+            clone_args.push("--single-branch".to_string());
+        }
+        clone_args.push(repo_url.clone());
+        clone_args.push(clone_dir.to_string_lossy().to_string());
+
+        let (exit_code, clone_stdout, clone_stderr, auth_strategy) =
+            self.run_git_with_fallback(&env.token, &clone_args).await?;
+        if exit_code != 0 {
+            return Err(format!(
+                "git clone failed (exit {}): {}",
+                exit_code,
+                first_non_empty_line(&clone_stderr).unwrap_or("unknown git clone error")
+            ));
+        }
+
+        let files = collect_repo_files(&clone_dir)?;
+        let mut uploaded_files = 0usize;
+        let mut uploaded_bytes = 0usize;
+
+        for (file_path, rel_path) in files {
+            let bytes = fs::read(&file_path)
+                .map_err(|e| format!("Failed to read cloned file '{}': {}", rel_path, e))?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let target_path = format!("{}/{}", destination_rel, rel_path);
+
+            let written = self.worker_workspace_write(&target_path, &b64).await?;
+            uploaded_files += 1;
+            uploaded_bytes += written;
+        }
+
+        Ok(json!({
+            "ok": true,
+            "action": "clone_repo",
+            "path": destination_abs,
+            "repo_url": repo_url,
+            "auth_strategy": auth_strategy,
+            "uploaded_files": uploaded_files,
+            "uploaded_bytes": uploaded_bytes,
+            "clone_stdout": clone_stdout,
+            "clone_stderr": clone_stderr,
+            "stored_in": "docker_workspace",
+        }))
+    }
+
+    async fn clone_repo(&self, arguments: &Value, env: &GithubEnv) -> String {
+        let temp_root = std::env::temp_dir().join(format!("vaultagent-github-{}", Uuid::new_v4()));
+        if let Err(err) = fs::create_dir_all(&temp_root) {
+            return json!({
+                "ok": false,
+                "error": format!("Failed to create temp directory: {}", err),
+            })
+            .to_string();
+        }
+
+        let result = self.clone_repo_inner(arguments, env, &temp_root).await;
+        let _ = fs::remove_dir_all(&temp_root);
+
+        match result {
+            Ok(v) => v.to_string(),
+            Err(err) => json!({
+                "ok": false,
+                "error": err,
+                "hint": "Check token repo access (Contents: Read at least) and owner/repo name.",
+            })
+            .to_string(),
         }
     }
 }
@@ -300,13 +398,27 @@ struct GitAuthConfig {
     extra_header: String,
 }
 
+#[derive(Deserialize)]
+struct WorkerExecuteResponse {
+    ok: bool,
+    result: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceWriteResponse {
+    ok: bool,
+    bytes_written: Option<usize>,
+    error: Option<String>,
+}
+
 #[async_trait]
 impl Skill for GitHubSkill {
     fn definition(&self) -> LlmToolDefinition {
         LlmToolDefinition {
             name: "github".to_string(),
             description: Some(
-                "Interact with GitHub from inside the Docker worker. Supports REST API actions and cloning repos into /workspace."
+                "Interact with GitHub using host-side secrets. Supports REST API actions and cloning repos into Docker /workspace via worker file API."
                     .to_string(),
             ),
             parameters_schema: json!({
@@ -365,7 +477,7 @@ impl Skill for GitHubSkill {
                     },
                     "destination": {
                         "type": "string",
-                        "description": "For clone_repo: relative path inside /workspace, e.g. repos/my-repo."
+                        "description": "For clone_repo: relative path in Docker /workspace, e.g. repos/my-repo."
                     },
                     "git_ref": {
                         "type": "string",
@@ -377,7 +489,7 @@ impl Skill for GitHubSkill {
                     },
                     "update_if_exists": {
                         "type": "boolean",
-                        "description": "For clone_repo: if destination exists, run git pull --ff-only. Default: true."
+                        "description": "For clone_repo: if destination exists, clear it first. Default: true."
                     }
                 },
                 "required": ["action"],
@@ -559,7 +671,89 @@ fn sanitize_workspace_relative_path(path: &str) -> Result<String, String> {
         return Err("destination contains forbidden path segments".to_string());
     }
 
-    Ok(path.trim().trim_start_matches("./").to_string())
+    let normalized = path.trim().trim_start_matches("./").to_string();
+    if normalized == "." {
+        return Err("destination must not be '.'".to_string());
+    }
+
+    Ok(normalized)
+}
+
+fn collect_repo_files(base: &Path) -> Result<Vec<(PathBuf, String)>, String> {
+    if !base.exists() {
+        return Err(format!(
+            "Cloned repository path not found: {}",
+            base.display()
+        ));
+    }
+
+    let mut files = Vec::new();
+    let mut stack = vec![base.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|e| format!("Failed to read directory '{}': {}", dir.display(), e))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(base)
+                .map_err(|e| format!("Failed to compute relative path: {}", e))?;
+
+            let is_git_internal = rel
+                .components()
+                .next()
+                .and_then(|c| c.as_os_str().to_str())
+                .map(|s| s == ".git")
+                .unwrap_or(false);
+            if is_git_internal {
+                continue;
+            }
+
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            if path.is_file() {
+                let rel_string = rel.to_string_lossy().replace('\\', "/");
+                files.push((path, rel_string));
+            }
+        }
+    }
+
+    files.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(files)
+}
+
+fn ensure_tool_ok(result: &Value) -> Result<(), String> {
+    if result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Ok(());
+    }
+
+    let err = result
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("Tool returned ok=false");
+    let stderr = result
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if stderr.trim().is_empty() {
+        Err(err.to_string())
+    } else {
+        Err(format!(
+            "{} | stderr: {}",
+            err,
+            first_non_empty_line(stderr).unwrap_or(stderr)
+        ))
+    }
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('"', "\\\"").replace('\'', "'\\''"))
 }
 
 fn basic_auth_header(username: &str, token: &str) -> String {

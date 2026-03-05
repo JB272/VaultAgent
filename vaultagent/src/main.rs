@@ -16,6 +16,8 @@ use reasoning::llm_apis::multi_provider::MultiProvider;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
 use reasoning::llm_interface::LlmInterface;
 use skills::SkillRegistry;
+use skills::default_skills::email_mailbox::EmailMailboxSkill;
+use skills::default_skills::github::GitHubSkill;
 use skills::default_skills::research::ResearchSkill;
 use skills::default_skills::spawn_subagent::SpawnSubagentSkill;
 use soul::Soul;
@@ -159,7 +161,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         Some(Arc::new(MultiProvider::new(backends)))
     };
 
-    // ── Skills (always via Docker sandbox worker) ───────
+    // ── Skills (remote worker + host secret-aware bridge skills) ───────
     let worker_url = std::env::var("WORKER_URL")
         .expect("WORKER_URL must be set (e.g. http://localhost:9100). All skills run in the Docker sandbox.");
     let worker_token = std::env::var("WORKER_TOKEN").unwrap_or_default();
@@ -172,6 +174,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     );
 
     let mut skills = SkillRegistry::new_with_remote(remote.clone());
+
+    // Host-side secret-aware skills.
+    // They can still read/write Docker files through worker APIs.
+    skills.add(EmailMailboxSkill);
+    skills.add(GitHubSkill::new(worker_url.clone(), worker_token.clone()));
 
     // Host-side orchestration skills.
     // Their actual work uses remote worker tools.
@@ -192,8 +199,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let website = setup_website(incoming.register_service(), &worker_url, &worker_token).await?;
     gateways.add(website.client);
 
-    if let Some(telegram) =
-        setup_telegram(incoming.register_service(), Arc::clone(&agent), llm).await
+    if let Some(telegram) = setup_telegram(
+        incoming.register_service(),
+        Arc::clone(&agent),
+        llm,
+        worker_url.clone(),
+        worker_token.clone(),
+    )
+    .await
     {
         gateways.add(telegram);
     }

@@ -10,10 +10,11 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -26,12 +27,10 @@ use crate::skills::default_skills::cron_remove::CronRemoveSkill;
 use crate::skills::default_skills::extract_pdf::ExtractPdfSkill;
 use crate::skills::default_skills::file_copy::FileCopySkill;
 use crate::skills::default_skills::file_store::FileStoreSkill;
-use crate::skills::default_skills::github::GitHubSkill;
 use crate::skills::default_skills::list_directory::ListDirectorySkill;
 use crate::skills::default_skills::memory_get::MemoryGetSkill;
 use crate::skills::default_skills::memory_save::MemorySaveSkill;
 use crate::skills::default_skills::memory_search::MemorySearchSkill;
-use crate::skills::default_skills::email_mailbox::EmailMailboxSkill;
 use crate::skills::default_skills::read_file::ReadFileSkill;
 use crate::skills::default_skills::shell_execute::ShellExecuteSkill;
 use crate::skills::default_skills::web_fetch::WebFetchSkill;
@@ -90,6 +89,43 @@ struct ExecuteResponse {
     error: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct WorkspaceReadRequest {
+    path: String,
+    #[serde(default)]
+    max_bytes: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceReadResponse {
+    ok: bool,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceWriteRequest {
+    path: String,
+    content_base64: String,
+}
+
+#[derive(Serialize)]
+struct WorkspaceWriteResponse {
+    ok: bool,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes_written: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 #[derive(Serialize)]
 struct DefinitionEntry {
     name: String,
@@ -108,6 +144,28 @@ fn check_token(headers: &HeaderMap, expected: &str) -> bool {
         .and_then(|v| v.to_str().ok())
         .map(|v| v == expected)
         .unwrap_or(false)
+}
+
+fn sanitize_workspace_relative_path(path: &str) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        return Err("Path must not be empty.".to_string());
+    }
+
+    let candidate = Path::new(path.trim());
+    if candidate.is_absolute() {
+        return Err("Only relative paths inside /workspace are allowed.".to_string());
+    }
+
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("Path contains forbidden segments (.. or root).".to_string());
+    }
+
+    Ok(PathBuf::from(path.trim()))
 }
 
 // ── Handlers ─────────────────────────────────────────────
@@ -191,6 +249,130 @@ async fn execute(
     }
 }
 
+async fn workspace_read(
+    State(state): State<WorkerState>,
+    headers: HeaderMap,
+    Json(req): Json<WorkspaceReadRequest>,
+) -> Result<Json<WorkspaceReadResponse>, StatusCode> {
+    if !check_token(&headers, &state.token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let safe_rel = match sanitize_workspace_relative_path(&req.path) {
+        Ok(p) => p,
+        Err(err) => {
+            return Ok(Json(WorkspaceReadResponse {
+                ok: false,
+                path: req.path,
+                content_base64: None,
+                size_bytes: None,
+                truncated: None,
+                error: Some(err),
+            }));
+        }
+    };
+
+    let abs_path = Path::new("/workspace").join(&safe_rel);
+    let max_bytes = req
+        .max_bytes
+        .unwrap_or(8 * 1024 * 1024)
+        .clamp(1, 64 * 1024 * 1024);
+
+    let bytes = match tokio::fs::read(&abs_path).await {
+        Ok(v) => v,
+        Err(err) => {
+            return Ok(Json(WorkspaceReadResponse {
+                ok: false,
+                path: safe_rel.to_string_lossy().to_string(),
+                content_base64: None,
+                size_bytes: None,
+                truncated: None,
+                error: Some(format!("Failed to read file: {}", err)),
+            }));
+        }
+    };
+
+    let total = bytes.len();
+    let truncated = total > max_bytes;
+    let slice = if truncated {
+        &bytes[..max_bytes]
+    } else {
+        bytes.as_slice()
+    };
+
+    Ok(Json(WorkspaceReadResponse {
+        ok: true,
+        path: safe_rel.to_string_lossy().to_string(),
+        content_base64: Some(base64::engine::general_purpose::STANDARD.encode(slice)),
+        size_bytes: Some(total),
+        truncated: Some(truncated),
+        error: None,
+    }))
+}
+
+async fn workspace_write(
+    State(state): State<WorkerState>,
+    headers: HeaderMap,
+    Json(req): Json<WorkspaceWriteRequest>,
+) -> Result<Json<WorkspaceWriteResponse>, StatusCode> {
+    if !check_token(&headers, &state.token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    let safe_rel = match sanitize_workspace_relative_path(&req.path) {
+        Ok(p) => p,
+        Err(err) => {
+            return Ok(Json(WorkspaceWriteResponse {
+                ok: false,
+                path: req.path,
+                bytes_written: None,
+                error: Some(err),
+            }));
+        }
+    };
+
+    let bytes =
+        match base64::engine::general_purpose::STANDARD.decode(req.content_base64.as_bytes()) {
+            Ok(v) => v,
+            Err(err) => {
+                return Ok(Json(WorkspaceWriteResponse {
+                    ok: false,
+                    path: safe_rel.to_string_lossy().to_string(),
+                    bytes_written: None,
+                    error: Some(format!("Invalid base64 content: {}", err)),
+                }));
+            }
+        };
+
+    let abs_path = Path::new("/workspace").join(&safe_rel);
+    if let Some(parent) = abs_path.parent() {
+        if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            return Ok(Json(WorkspaceWriteResponse {
+                ok: false,
+                path: safe_rel.to_string_lossy().to_string(),
+                bytes_written: None,
+                error: Some(format!("Failed to create parent directories: {}", err)),
+            }));
+        }
+    }
+
+    if let Err(err) = tokio::fs::write(&abs_path, &bytes).await {
+        return Ok(Json(WorkspaceWriteResponse {
+            ok: false,
+            path: safe_rel.to_string_lossy().to_string(),
+            bytes_written: None,
+            error: Some(format!("Failed to write file: {}", err)),
+        }));
+    }
+
+    Ok(Json(WorkspaceWriteResponse {
+        ok: true,
+        path: safe_rel.to_string_lossy().to_string(),
+        bytes_written: Some(bytes.len()),
+        error: None,
+    }))
+}
+
 // ── Entrypoint ───────────────────────────────────────────
 
 /// Start the worker HTTP server.  Called when the binary runs with `--worker`.
@@ -254,8 +436,6 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
     // Web skills
     skills.add(WebSearchSkill::new());
     skills.add(WebFetchSkill::new());
-    skills.add(EmailMailboxSkill);
-    skills.add(GitHubSkill::new());
 
     // Memory skills
     skills.add(MemorySaveSkill::new(Arc::clone(&soul.memory)));
@@ -287,6 +467,8 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
         .route("/health", get(health))
         .route("/definitions", get(definitions))
         .route("/execute", post(execute))
+        .route("/workspace/read", post(workspace_read))
+        .route("/workspace/write", post(workspace_write))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

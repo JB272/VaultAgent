@@ -33,10 +33,7 @@ impl PythonSkill {
         let script_path = script_path.into();
 
         if !script_path.exists() {
-            return Err(format!(
-                "Python skill not found: {}",
-                script_path.display()
-            ));
+            return Err(format!("Python skill not found: {}", script_path.display()));
         }
 
         let output = Command::new("python3")

@@ -44,7 +44,11 @@ impl Skill for WriteFileSkill {
             .and_then(Value::as_str)
             .unwrap_or_default();
 
-        println!("[WriteFile] Writing to '{}' ({} bytes)", path, content.len());
+        println!(
+            "[WriteFile] Writing to '{}' ({} bytes)",
+            path,
+            content.len()
+        );
 
         match sanitize_relative_path(path) {
             Ok(safe_path) => {
@@ -69,7 +73,11 @@ impl Skill for WriteFileSkill {
 
                 match tokio::fs::write(&safe_path, content).await {
                     Ok(()) => {
-                        println!("[WriteFile] OK — wrote {} bytes to {}", content.len(), safe_path.display());
+                        println!(
+                            "[WriteFile] OK — wrote {} bytes to {}",
+                            content.len(),
+                            safe_path.display()
+                        );
                         json!({
                             "ok": true,
                             "path": safe_path.to_string_lossy(),
@@ -109,10 +117,12 @@ fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
         return Err("Only relative paths inside the workspace are allowed.".to_string());
     }
 
-    if candidate
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
-    {
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
         return Err("Path contains forbidden segments (.. or root).".to_string());
     }
 
