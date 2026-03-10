@@ -37,7 +37,7 @@ impl Skill for MemorySaveSkill {
                     "storage": {
                         "type": "string",
                         "enum": ["daily", "long_term"],
-                        "description": "Storage target: 'daily' = today's log, 'long_term' = MEMORY.md"
+                        "description": "Storage target: 'daily' = today's log, 'long_term' = MEMORY.md. If omitted, defaults to 'long_term'."
                     }
                 },
                 "required": ["entry"],
@@ -59,7 +59,7 @@ impl Skill for MemorySaveSkill {
         let storage = arguments
             .get("storage")
             .and_then(Value::as_str)
-            .unwrap_or("daily");
+            .unwrap_or("long_term");
 
         println!(
             "[MemorySave] Saving to '{}': {}…",

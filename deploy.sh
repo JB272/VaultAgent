@@ -90,10 +90,18 @@ fi
 echo "   Syncing data/container/soul/ (skip existing) …"
 for f in $(find "$DATA_DIR/container/soul" -type f -not -name '.gitkeep'); do
     rel="${f#$DATA_DIR/container/}"   # e.g. soul/personality.md
-    ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/$rel" || {
-        scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
-        echo "   + $rel"
-    }
+    if [ "$rel" = "soul/personality.md" ]; then
+        # Heal old installs where personality.md exists but is still empty.
+        ssh "$REMOTE_HOST" "test -s $REMOTE_DIR/$rel" || {
+            scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
+            echo "   + $rel (seeded default personality)"
+        }
+    else
+        ssh "$REMOTE_HOST" "test -f $REMOTE_DIR/$rel" || {
+            scp "$f" "$REMOTE_HOST:$REMOTE_DIR/$rel"
+            echo "   + $rel"
+        }
+    fi
 done
 
 # Python-Skills — always overwrite (code updates)

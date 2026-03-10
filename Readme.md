@@ -26,11 +26,11 @@ Click the image to watch the demo video: [`assets/short.mp4`](assets/short.mp4)
 
 - **Sandboxed tool execution**: Most skills run inside a Docker worker; secret-aware skills (for example `email_mailbox`, `github`) run on host and access Docker files via worker API
 - **Telegram bot**: Polling mode and webhook mode
-- **Telegram file uploads**: Receives document uploads (for example PDF/ZIP/TXT), stores them for downstream tool/Python processing
+- **Telegram file uploads**: Receives document uploads (for example PDF/ZIP/TXT), stores them for downstream tool/Python processing, and logs references in `soul/uploads_index.md`
 - **Multi-provider LLM integration**: Supports OpenAI-compatible providers and Anthropic, including runtime model switching
 - **Persistent chat history**: Conversation history is saved to disk and restored on restart
 - **Image input support**: Telegram photo messages are passed to the model as image content
-- **Voice message transcription**: Telegram voice memos are transcribed via Whisper-compatible endpoints
+- **Voice message transcription**: Telegram voice memos are transcribed via Whisper-compatible endpoints and the original audio file is persisted in `skills/uploads`
 - **Long-term memory**: Markdown-backed memory store with `memory_save` and `memory_search`
 - **On-demand memory recall**: `MEMORY.md` is always in prompt; daily session files are accessed via `memory_search` + `memory_get`
 - **Cron scheduler**: One-shot and recurring tasks via `cron_add`, `cron_list`, and `cron_remove`

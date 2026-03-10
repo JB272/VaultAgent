@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::reasoning::llm_interface::LlmToolDefinition;
 use crate::skills::Skill;
@@ -68,19 +69,25 @@ impl Skill for ListDirectorySkill {
             }
 
             let meta = entry.metadata().await;
-            let (kind, size) = match meta {
+            let (kind, size, modified_unix) = match meta {
                 Ok(m) => {
                     let kind = if m.is_dir() { "dir" } else { "file" };
                     let size = if m.is_file() { Some(m.len()) } else { None };
-                    (kind, size)
+                    let modified_unix = m
+                        .modified()
+                        .ok()
+                        .and_then(|ts| ts.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|dur| dur.as_secs());
+                    (kind, size, modified_unix)
                 }
-                Err(_) => ("unknown", None),
+                Err(_) => ("unknown", None, None),
             };
 
             entries.push(json!({
                 "name": name,
                 "type": kind,
                 "size": size,
+                "modified_unix": modified_unix,
             }));
         }
 

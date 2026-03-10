@@ -14,11 +14,13 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine;
+use chrono::Utc;
 use reqwest::Client;
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 use std::{collections::HashMap, collections::HashSet, error::Error, net::SocketAddr, sync::Arc};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -1142,7 +1144,7 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                             );
 
                             let metadata = format!(
-                                "[File upload]\n- name: {}\n- mime: {}\n- size: {}\n- saved_path: {}\n\n{}\n\nThe file is already saved on disk at the saved_path above. To move or copy it to another folder, use the file_copy tool (source=saved_path, destination=target_path). Do NOT try to re-create the file content with file_store.",
+                                "[File upload]\n- name: {}\n- mime: {}\n- size: {}\n- saved_path: {}\n- index_file: soul/uploads_index.md\n\n{}\n\nThe file is already saved on disk at the saved_path above. To move or copy it to another folder, use the file_copy tool (source=saved_path, destination=target_path). If the user later says \"the file from before\", first check soul/uploads_index.md and skills/uploads. Do NOT try to re-create file content with file_store.",
                                 document
                                     .file_name
                                     .clone()
@@ -1158,6 +1160,22 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                                 path,
                                 user_text
                             );
+
+                            if let Err(err) = append_upload_index_entry(
+                                message.chat.id,
+                                "document",
+                                document.file_name.as_deref(),
+                                document.mime_type.as_deref(),
+                                data.len(),
+                                &path,
+                            )
+                            .await
+                            {
+                                eprintln!(
+                                    "[Telegram][Document] Failed to append upload index: {}",
+                                    err
+                                );
+                            }
 
                             return Some(ExtractedContent {
                                 text: metadata,
@@ -1210,34 +1228,127 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
 
     // 4) Voice memo or audio file → transcribe
     let audio_info = message.voice.as_ref().or(message.audio.as_ref())?;
-    let transcription_service = bot.transcription.as_ref()?;
+    let transcription_service = bot.transcription.as_ref();
 
     let mime = audio_info.mime_type.as_deref();
 
     match bot.get_file_path(&audio_info.file_id).await {
         Ok(file_path) => match bot.download_file(&file_path).await {
             Ok(data) => {
+                let audio_size = data.len();
                 println!(
-                    "[Telegram][Voice] Received audio message ({} bytes, {:?}), transcribing...",
-                    data.len(),
-                    mime
+                    "[Telegram][Voice] Received audio message ({} bytes, {:?})",
+                    audio_size, mime
                 );
-                match transcription_service.transcribe(data, mime).await {
-                    Ok(text) if !text.trim().is_empty() => {
-                        println!("[Telegram][Voice] Transcription: {}", text);
-                        Some(ExtractedContent {
-                            text: format!("[Voice message] {}", text),
-                            image_url: None,
-                        })
+                let audio_name = format!(
+                    "voice_{}.{}",
+                    sanitize_filename(&audio_info.file_id),
+                    extension_from_mime(mime)
+                );
+                let stored_path =
+                    match persist_telegram_file(bot, &data, Some(&audio_name), &audio_info.file_id)
+                        .await
+                    {
+                        Ok(path) => {
+                            if let Err(err) = append_upload_index_entry(
+                                message.chat.id,
+                                "voice",
+                                Some(&audio_name),
+                                mime,
+                                audio_size,
+                                &path,
+                            )
+                            .await
+                            {
+                                eprintln!(
+                                    "[Telegram][Voice] Failed to append upload index: {}",
+                                    err
+                                );
+                            }
+                            Some(path)
+                        }
+                        Err(err) => {
+                            eprintln!("[Telegram][Voice] Failed to store audio: {}", err);
+                            None
+                        }
+                    };
+
+                if let Some(transcription_service) = transcription_service {
+                    println!("[Telegram][Voice] Transcribing voice message...");
+                    match transcription_service.transcribe(data, mime).await {
+                        Ok(transcript) if !transcript.trim().is_empty() => {
+                            println!("[Telegram][Voice] Transcription: {}", transcript);
+                            let mut text = format!(
+                                "[Voice message]\n- mime: {}\n- size: {}",
+                                mime.unwrap_or("unknown"),
+                                audio_size
+                            );
+                            if let Some(ref path) = stored_path {
+                                text.push_str(&format!(
+                                    "\n- saved_path: {}\n- index_file: soul/uploads_index.md",
+                                    path
+                                ));
+                            }
+                            text.push_str(&format!("\n\nTranscript:\n{}", transcript.trim()));
+                            Some(ExtractedContent {
+                                text,
+                                image_url: None,
+                            })
+                        }
+                        Ok(_) => {
+                            eprintln!("[Telegram][Voice] Transcription returned empty text.");
+                            let mut text = format!(
+                                "[Voice message]\n- mime: {}\n- size: {}\n\nTranscription returned empty text.",
+                                mime.unwrap_or("unknown"),
+                                audio_size
+                            );
+                            if let Some(ref path) = stored_path {
+                                text.push_str(&format!(
+                                    "\nThe audio file was still saved at: {}\nIndex: soul/uploads_index.md",
+                                    path
+                                ));
+                            }
+                            Some(ExtractedContent {
+                                text,
+                                image_url: None,
+                            })
+                        }
+                        Err(err) => {
+                            eprintln!("[Telegram][Voice] Transcription failed: {}", err);
+                            let mut text = format!(
+                                "[Voice message]\n- mime: {}\n- size: {}\n\nTranscription failed: {}",
+                                mime.unwrap_or("unknown"),
+                                audio_size,
+                                err
+                            );
+                            if let Some(ref path) = stored_path {
+                                text.push_str(&format!(
+                                    "\nThe audio file was saved at: {}\nIndex: soul/uploads_index.md",
+                                    path
+                                ));
+                            }
+                            Some(ExtractedContent {
+                                text,
+                                image_url: None,
+                            })
+                        }
                     }
-                    Ok(_) => {
-                        eprintln!("[Telegram][Voice] Transcription returned empty text.");
-                        None
+                } else {
+                    let mut text = format!(
+                        "[Voice message]\n- mime: {}\n- size: {}\n\nNo transcription service is configured.",
+                        mime.unwrap_or("unknown"),
+                        audio_size
+                    );
+                    if let Some(ref path) = stored_path {
+                        text.push_str(&format!(
+                            "\nThe audio file was saved at: {}\nIndex: soul/uploads_index.md",
+                            path
+                        ));
                     }
-                    Err(err) => {
-                        eprintln!("[Telegram][Voice] Transcription failed: {}", err);
-                        None
-                    }
+                    Some(ExtractedContent {
+                        text,
+                        image_url: None,
+                    })
                 }
             }
             Err(err) => {
@@ -1266,14 +1377,90 @@ async fn persist_telegram_file(
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| format!("file_{}.bin", sanitize_filename(file_id)));
 
-    let unique = uuid::Uuid::new_v4().to_string();
-    let stored_name = format!("{}_{}", unique, safe_name);
+    let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let unique = uuid::Uuid::new_v4().simple().to_string();
+    let short_id = &unique[..8];
+    let stored_name = format!("{}-{}_{}", timestamp, short_id, safe_name);
     let relative_path = format!("skills/uploads/{}", stored_name);
     bot.worker_workspace_write(&relative_path, bytes)
         .await
         .map_err(|e| format!("Failed to store upload via worker API: {}", e))?;
 
     Ok(relative_path)
+}
+
+fn extension_from_mime(mime: Option<&str>) -> &'static str {
+    let lower = mime.unwrap_or("").to_ascii_lowercase();
+    match lower.as_str() {
+        "audio/ogg" | "application/ogg" => "ogg",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/m4a" => "m4a",
+        _ => "bin",
+    }
+}
+
+fn sanitize_index_field(value: Option<&str>) -> String {
+    value
+        .unwrap_or("unknown")
+        .replace('\n', " ")
+        .replace('\r', " ")
+        .replace('|', "/")
+        .trim()
+        .to_string()
+}
+
+async fn append_upload_index_entry(
+    chat_id: i64,
+    kind: &str,
+    original_name: Option<&str>,
+    mime: Option<&str>,
+    size_bytes: usize,
+    saved_path: &str,
+) -> Result<(), String> {
+    let index_path = Path::new("soul").join("uploads_index.md");
+    if let Some(parent) = index_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create upload index directory: {}", e))?;
+    }
+
+    let needs_header = match tokio::fs::metadata(&index_path).await {
+        Ok(meta) => meta.len() == 0,
+        Err(_) => true,
+    };
+
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&index_path)
+        .await
+        .map_err(|e| format!("Failed to open upload index: {}", e))?;
+
+    if needs_header {
+        file.write_all(
+            b"# Upload Index\n\nChronological list of Telegram uploads for later retrieval.\n\n",
+        )
+        .await
+        .map_err(|e| format!("Failed to write upload index header: {}", e))?;
+    }
+
+    let line = format!(
+        "- {} | chat={} | kind={} | name={} | mime={} | size={} | path={}\n",
+        Utc::now().to_rfc3339(),
+        chat_id,
+        kind,
+        sanitize_index_field(original_name),
+        sanitize_index_field(mime),
+        size_bytes,
+        sanitize_index_field(Some(saved_path))
+    );
+
+    file.write_all(line.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to append upload index: {}", e))?;
+
+    Ok(())
 }
 
 fn sanitize_filename(input: &str) -> String {
