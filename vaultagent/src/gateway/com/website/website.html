@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang='de'>
+<html lang='en'>
   <head>
     <meta charset='UTF-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1.0' />
@@ -39,11 +39,11 @@
               <svg viewBox='0 0 24 24' width='32' height='32' fill='none' stroke='currentColor' stroke-width='1.5'><path d='M12 2L2 7l10 5 10-5-10-5z'/><path d='M2 17l10 5 10-5'/><path d='M2 12l10 5 10-5'/></svg>
             </div>
             <h2>VaultAgent Chat</h2>
-            <p>Dein pers&ouml;nlicher AI-Assistent. Schreibe eine Nachricht, um zu beginnen.</p>
+            <p>Your personal AI assistant. Write a message to get started.</p>
           </div>
         </main>
         <form id='composer' class='composer'>
-          <input id='messageInput' autocomplete='off' placeholder='Nachricht schreiben...' />
+          <input id='messageInput' autocomplete='off' placeholder='Write a message...' />
           <button type='submit'>
             <svg viewBox='0 0 24 24' width='18' height='18' fill='none' stroke='currentColor' stroke-width='2'><line x1='22' y1='2' x2='11' y2='13'/><polygon points='22 2 15 22 11 13 2 9 22 2'/></svg>
           </button>
@@ -61,15 +61,15 @@
               </span>
             </div>
             <div class='files-actions'>
-              <button id='btn-new-file' class='toolbar-btn' title='Neue Datei'>
+              <button id='btn-new-file' class='toolbar-btn' title='New File'>
                 <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><path d='M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z'/><polyline points='14 2 14 8 20 8'/><line x1='12' y1='18' x2='12' y2='12'/><line x1='9' y1='15' x2='15' y2='15'/></svg>
-                Datei
+                File
               </button>
-              <button id='btn-new-dir' class='toolbar-btn' title='Neuer Ordner'>
+              <button id='btn-new-dir' class='toolbar-btn' title='New Folder'>
                 <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><path d='M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z'/><line x1='12' y1='11' x2='12' y2='17'/><line x1='9' y1='14' x2='15' y2='14'/></svg>
-                Ordner
+                Folder
               </button>
-              <button id='btn-refresh' class='toolbar-btn icon-only' title='Aktualisieren'>
+              <button id='btn-refresh' class='toolbar-btn icon-only' title='Refresh'>
                 <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><polyline points='23 4 23 10 17 10'/><path d='M20.49 15a9 9 0 11-2.12-9.36L23 10'/></svg>
               </button>
             </div>
@@ -83,18 +83,18 @@
             <div class='editor-header'>
               <button id='btn-back' class='toolbar-btn'>
                 <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><polyline points='15 18 9 12 15 6'/></svg>
-                Zur&uuml;ck
+                Back
               </button>
               <span id='editor-filename' class='editor-filename'></span>
               <div class='editor-actions'>
-                <button id='btn-save' class='toolbar-btn primary' title='Speichern (Ctrl+S)'>
+                <button id='btn-save' class='toolbar-btn primary' title='Save (Ctrl+S)'>
                   <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><path d='M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg>
-                  Speichern
+                  Save
                 </button>
-                <button id='btn-rename-editor' class='toolbar-btn' title='Umbenennen'>
+                <button id='btn-rename-editor' class='toolbar-btn' title='Rename'>
                   <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><path d='M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7'/><path d='M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z'/></svg>
                 </button>
-                <button id='btn-delete-editor' class='toolbar-btn danger' title='L&ouml;schen'>
+                <button id='btn-delete-editor' class='toolbar-btn danger' title='Delete'>
                   <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2'><polyline points='3 6 5 6 21 6'/><path d='M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2'/></svg>
                 </button>
               </div>
@@ -107,10 +107,10 @@
 
     <!-- Context Menu -->
     <div id='context-menu' class='context-menu hidden'>
-      <button class='ctx-item' data-action='open'>&#128194; &Ouml;ffnen</button>
-      <button class='ctx-item' data-action='rename'>&#9998; Umbenennen</button>
-      <button class='ctx-item' data-action='copy'>&#128203; Kopieren</button>
-      <button class='ctx-item' data-action='delete'>&#128465; L&ouml;schen</button>
+      <button class='ctx-item' data-action='open'>&#128194; Open</button>
+      <button class='ctx-item' data-action='rename'>&#9998; Rename</button>
+      <button class='ctx-item' data-action='copy'>&#128203; Copy</button>
+      <button class='ctx-item' data-action='delete'>&#128465; Delete</button>
     </div>
 
     <script src='/assets/website.js'></script>

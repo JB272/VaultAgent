@@ -41,10 +41,10 @@ This file defines how coding agents should work in this repository.
 5. For user-facing behavior changes, include clear fallback behavior.
 6. For queue/concurrency changes, avoid message loss and preserve chat ordering.
 7. Default language is english but we want to make it multilingual.
+8. No errorhandling based on Strings in LLM Answeres since we do not know the language.
 
 ## Definition of Done
 
 - Code compiles (`cargo check`) after changes.
 - No obvious regression in Telegram upload flow.
 - New behavior is discoverable by the model via prompt/tool descriptions.
-- Mention any operational follow-up required on the server (`jarvis`) explicitly.

@@ -204,18 +204,18 @@ async function loadFiles(path) {
     const res = await fetch('/api/files/list?path=' + encodeURIComponent(path), {
       credentials: 'same-origin',
     });
-    if (!res.ok) throw new Error('Fehler ' + res.status);
+    if (!res.ok) throw new Error('Error ' + res.status);
     const result = await res.json();
 
     if (!result.ok) {
-      fileList.innerHTML = '<div class="empty-state">Fehler: '
-        + escapeHtml(result.error || 'Unbekannt') + '</div>';
+      fileList.innerHTML = '<div class="empty-state">Error: '
+        + escapeHtml(result.error || 'Unknown') + '</div>';
       return;
     }
 
     const entries = result.entries || [];
     if (entries.length === 0) {
-      fileList.innerHTML = '<div class="empty-state">Ordner ist leer</div>';
+      fileList.innerHTML = '<div class="empty-state">Folder is empty</div>';
       return;
     }
 
@@ -239,7 +239,7 @@ async function loadFiles(path) {
       fileList.appendChild(createFileEntry(entry, entryPath));
     }
   } catch (err) {
-    fileList.innerHTML = '<div class="empty-state">Fehler: '
+    fileList.innerHTML = '<div class="empty-state">Error: '
       + escapeHtml(err.message) + '</div>';
   }
 }
@@ -342,7 +342,7 @@ contextMenu.querySelectorAll('.ctx-item').forEach(item => {
 // ── File Operations ────────────────────────────────────
 
 async function promptRename(path, name) {
-  showModal('Umbenennen', name, async (newName) => {
+  showModal('Rename', name, async (newName) => {
     if (!newName || newName === name) return;
     const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
     const to = dir === '.' ? newName : dir + '/' + newName;
@@ -353,23 +353,23 @@ async function promptRename(path, name) {
         body: JSON.stringify({ from: path, to }),
         credentials: 'same-origin',
       });
-      if (!res.ok) throw new Error('Fehler ' + res.status);
+      if (!res.ok) throw new Error('Error ' + res.status);
       const result = await res.json();
       if (result.ok) {
         showToast('Umbenannt!');
         loadFiles(currentPath);
       } else {
-        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+        showToast('Error: ' + (result.error || 'Unknown'), 'error');
       }
-    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
-  }, 'Umbenennen');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  }, 'Rename');
 }
 
 async function promptCopy(path, name) {
   const defaultName = name.includes('.')
     ? name.replace(/(\.[^.]+)$/, '_copy$1')
     : name + '_copy';
-  showModal('Kopieren', defaultName, async (newName) => {
+  showModal('Copy', defaultName, async (newName) => {
     if (!newName) return;
     const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
     const to = dir === '.' ? newName : dir + '/' + newName;
@@ -380,16 +380,16 @@ async function promptCopy(path, name) {
         body: JSON.stringify({ from: path, to }),
         credentials: 'same-origin',
       });
-      if (!res.ok) throw new Error('Fehler ' + res.status);
+      if (!res.ok) throw new Error('Error ' + res.status);
       const result = await res.json();
       if (result.ok) {
         showToast('Kopiert!');
         loadFiles(currentPath);
       } else {
-        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+        showToast('Error: ' + (result.error || 'Unknown'), 'error');
       }
-    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
-  }, 'Kopieren');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  }, 'Copy');
 }
 
 async function confirmDelete(path, name) {
@@ -401,10 +401,10 @@ async function confirmDelete(path, name) {
       body: JSON.stringify({ path }),
       credentials: 'same-origin',
     });
-    if (!res.ok) throw new Error('Fehler ' + res.status);
+    if (!res.ok) throw new Error('Error ' + res.status);
     showToast('Gel\u00f6scht!');
     loadFiles(currentPath);
-  } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+  } catch (err) { showToast('Error: ' + err.message, 'error'); }
 }
 
 // ── File Editor ────────────────────────────────────────
@@ -425,11 +425,11 @@ async function openFile(path) {
     const res = await fetch('/api/files/read?path=' + encodeURIComponent(path), {
       credentials: 'same-origin',
     });
-    if (!res.ok) throw new Error('Fehler ' + res.status);
+    if (!res.ok) throw new Error('Error ' + res.status);
     const result = await res.json();
 
     if (!result.ok) {
-      showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+      showToast('Error: ' + (result.error || 'Unknown'), 'error');
       return;
     }
 
@@ -438,7 +438,7 @@ async function openFile(path) {
     fileBrowser.style.display = 'none';
     fileEditor.classList.remove('hidden');
   } catch (err) {
-    showToast('Fehler: ' + err.message, 'error');
+    showToast('Error: ' + err.message, 'error');
   }
 }
 
@@ -453,12 +453,12 @@ document.getElementById('btn-save').addEventListener('click', async () => {
       body: JSON.stringify({ path, content }),
       credentials: 'same-origin',
     });
-    if (!res.ok) throw new Error('Fehler ' + res.status);
+    if (!res.ok) throw new Error('Error ' + res.status);
     const result = await res.json();
     if (result.ok) showToast('Gespeichert!');
-    else showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+    else showToast('Error: ' + (result.error || 'Unknown'), 'error');
   } catch (err) {
-    showToast('Fehler: ' + err.message, 'error');
+    showToast('Error: ' + err.message, 'error');
   }
 });
 
@@ -473,7 +473,7 @@ document.getElementById('btn-delete-editor').addEventListener('click', async () 
 document.getElementById('btn-rename-editor').addEventListener('click', () => {
   const path = editorFilename.textContent;
   const name = path.includes('/') ? path.split('/').pop() : path;
-  showModal('Umbenennen', name, async (newName) => {
+  showModal('Rename', name, async (newName) => {
     if (!newName || newName === name) return;
     const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '.';
     const to = dir === '.' ? newName : dir + '/' + newName;
@@ -484,16 +484,16 @@ document.getElementById('btn-rename-editor').addEventListener('click', () => {
         body: JSON.stringify({ from: path, to }),
         credentials: 'same-origin',
       });
-      if (!res.ok) throw new Error('Fehler ' + res.status);
+      if (!res.ok) throw new Error('Error ' + res.status);
       const result = await res.json();
       if (result.ok) {
         showToast('Umbenannt!');
         editorFilename.textContent = to;
       } else {
-        showToast('Fehler: ' + (result.error || 'Unbekannt'), 'error');
+        showToast('Error: ' + (result.error || 'Unknown'), 'error');
       }
-    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
-  }, 'Umbenennen');
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+  }, 'Rename');
 });
 
 // Back
@@ -510,7 +510,7 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
 
 // New File
 document.getElementById('btn-new-file').addEventListener('click', () => {
-  showModal('Neue Datei', 'Dateiname', async (name) => {
+  showModal('New File', 'Filename', async (name) => {
     if (!name) return;
     const path = currentPath === '.' ? name : currentPath + '/' + name;
     try {
@@ -520,14 +520,14 @@ document.getElementById('btn-new-file').addEventListener('click', () => {
         body: JSON.stringify({ path, content: '' }),
         credentials: 'same-origin',
       });
-      if (res.ok) { showToast('Datei erstellt!'); loadFiles(currentPath); }
-    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+      if (res.ok) { showToast('File created!'); loadFiles(currentPath); }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   });
 });
 
 // New Directory
 document.getElementById('btn-new-dir').addEventListener('click', () => {
-  showModal('Neuer Ordner', 'Ordnername', async (name) => {
+  showModal('New Folder', 'Folder name', async (name) => {
     if (!name) return;
     const path = currentPath === '.' ? name : currentPath + '/' + name;
     try {
@@ -537,8 +537,8 @@ document.getElementById('btn-new-dir').addEventListener('click', () => {
         body: JSON.stringify({ path }),
         credentials: 'same-origin',
       });
-      if (res.ok) { showToast('Ordner erstellt!'); loadFiles(currentPath); }
-    } catch (err) { showToast('Fehler: ' + err.message, 'error'); }
+      if (res.ok) { showToast('Folder created!'); loadFiles(currentPath); }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   });
 });
 
@@ -587,11 +587,11 @@ function showModal(title, defaultValue, onConfirm, confirmLabel) {
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'toolbar-btn';
-  cancelBtn.textContent = 'Abbrechen';
+  cancelBtn.textContent = 'Cancel';
 
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'toolbar-btn primary';
-  confirmBtn.textContent = confirmLabel || 'Erstellen';
+  confirmBtn.textContent = confirmLabel || 'Create';
 
   actions.appendChild(cancelBtn);
   actions.appendChild(confirmBtn);

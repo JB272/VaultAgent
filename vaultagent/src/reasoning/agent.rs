@@ -68,17 +68,11 @@ impl Agent {
             || t.contains("can't access external websites")
             || t.contains("do not have internet access")
             || t.contains("i don't have internet access")
-            || t.contains("ich kann nicht im internet")
-            || t.contains("ich habe keinen zugriff auf das internet")
-            || t.contains("ich kann nicht auf externe websites zugreifen")
     }
 
     fn looks_like_permission_claim(text: &str) -> bool {
         let t = text.to_lowercase();
-        t.contains("keine berechtigung")
-            || t.contains("habe keine berechtigung")
-            || t.contains("nicht die erforderlichen berechtigungen")
-            || t.contains("permission denied")
+        t.contains("permission denied")
             || t.contains("do not have permission")
             || t.contains("don't have permission")
             || t.contains("cannot install")
@@ -317,9 +311,9 @@ impl Agent {
         let mut sum_msgs = vec![LlmMessage {
             role: LlmRole::Developer,
             content: LlmMessageContent::Text(
-                "Du bist ein Zusammenfassungs-Assistent. Fasse die folgende Konversation kompakt zusammen. \
-                 Behalte alle wichtigen Fakten, Entscheidungen, Datei-Pfade, genannte Zahlen und Kontext. \
-                 Antworte NUR mit der Zusammenfassung, keine Einleitung, kein Kommentar."
+                "You are a summarization assistant. Summarize the following conversation compactly. \
+                 Keep all important facts, decisions, file paths, numbers, and context. \
+                 Reply ONLY with the summary, no intro and no commentary."
                     .to_string(),
             ),
             name: None,
@@ -367,7 +361,7 @@ impl Agent {
 
         sum_msgs.push(LlmMessage {
             role: LlmRole::User,
-            content: LlmMessageContent::Text("Fasse zusammen.".to_string()),
+            content: LlmMessageContent::Text("Summarize now.".to_string()),
             name: None,
             tool_call_id: None,
             tool_calls: Vec::new(),
@@ -395,7 +389,7 @@ impl Agent {
                         LlmMessage {
                             role: LlmRole::User,
                             content: LlmMessageContent::Text(format!(
-                                "[Zusammenfassung bisheriger Konversation]\n{}",
+                                "[Summary of previous conversation]\n{}",
                                 summary
                             )),
                             name: None,
@@ -578,7 +572,7 @@ impl Agent {
         let tokens = *self.last_prompt_tokens.lock().await;
 
         if tokens == 0 && message_count == 0 {
-            return "🧠 <b>Context Window</b>\n\nKeine aktive Konversation. Sende eine Nachricht um zu starten.".to_string();
+            return "🧠 <b>Context Window</b>\n\nNo active conversation yet. Send a message to begin.".to_string();
         }
 
         let pct = if self.context_window_size > 0 {
@@ -594,10 +588,10 @@ impl Agent {
 
         format!(
             "🧠 <b>Context Window</b>\n\n\
-             {} <b>{:.0}%</b> belegt\n\n\
+             {} <b>{:.0}%</b> used\n\n\
              • Tokens: <b>{}</b> / <b>{}</b>\n\
-             • Nachrichten: <b>{}</b>\n\n\
-             Nutze /new um die Konversation zurückzusetzen.",
+             • Messages: <b>{}</b>\n\n\
+             Use /new to reset the conversation.",
             bar, pct, tokens, self.context_window_size, message_count
         )
     }
@@ -666,7 +660,7 @@ impl Agent {
             let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
             let mut prompt = format!(
-                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'lege die Dateien ab'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n- Telegram uploads are persisted under `skills/uploads`.\n- Upload references are also logged to `soul/uploads_index.md`.\n- If the user refers to an earlier upload without an exact path (for example \"the memo from earlier\"), first inspect `soul/uploads_index.md` and/or `skills/uploads` using tools.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
+                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'store these files'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n- Telegram uploads are persisted under `skills/uploads`.\n- Upload references are also logged to `soul/uploads_index.md`.\n- If the user refers to an earlier upload without an exact path (for example \"the memo from earlier\"), first inspect `soul/uploads_index.md` and/or `skills/uploads` using tools.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
                 base_prompt, chat_id, user_tz, now_utc, user_tz
             );
             if let Some(upload_context) = self.recent_upload_index_context(12) {

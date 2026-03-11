@@ -305,9 +305,9 @@ async fn handle_global_command(text: &str, agent: &Agent) -> Option<String> {
     match text {
         "/new" => {
             agent.clear_history().await;
-            let mut reply = "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string();
+            let mut reply = "🧹 Conversation reset. New chat started!".to_string();
             if let Some(model) = agent.active_model_label() {
-                reply.push_str(&format!("\nAktives Modell: {}", model));
+                reply.push_str(&format!("\nActive model: {}", model));
             }
             Some(reply)
         }
