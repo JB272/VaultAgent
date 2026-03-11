@@ -61,24 +61,6 @@ impl Agent {
             .any(|n| n == "shell_execute")
     }
 
-    fn looks_like_no_internet_claim(text: &str) -> bool {
-        let t = text.to_lowercase();
-        t.contains("can't browse")
-            || t.contains("cannot browse")
-            || t.contains("can't access external websites")
-            || t.contains("do not have internet access")
-            || t.contains("i don't have internet access")
-    }
-
-    fn looks_like_permission_claim(text: &str) -> bool {
-        let t = text.to_lowercase();
-        t.contains("permission denied")
-            || t.contains("do not have permission")
-            || t.contains("don't have permission")
-            || t.contains("cannot install")
-            || t.contains("can't install")
-    }
-
     fn recent_upload_index_context(&self, max_items: usize) -> Option<String> {
         let soul = self.soul.as_ref()?;
         let index_path = soul.dir().join("uploads_index.md");
@@ -689,8 +671,7 @@ impl Agent {
         }
 
         let mut forced_tool_retry = false;
-        let mut retried_after_no_web_claim = false;
-        let mut retried_after_permission_claim = false;
+        let mut retried_text_only_once = false;
 
         for _ in 0..self.max_rounds {
             if Self::stop_requested(start_stop_epoch) {
@@ -745,13 +726,15 @@ impl Agent {
                     continue;
                 }
 
-                // Safety net: if the model claims it cannot browse while web tools exist,
-                // give it one forced tool-call retry instead of returning the refusal.
-                if !retried_after_no_web_claim
-                    && self.has_web_capability()
-                    && Self::looks_like_no_internet_claim(content)
+                // Language-agnostic safety net: if the model produced a text-only
+                // response while tools are available, force one retry with
+                // tool_choice=required.  This prevents the model from refusing
+                // to act (e.g. claiming no internet/permissions) regardless of
+                // the language it answers in.
+                if !retried_text_only_once
+                    && (self.has_web_capability() || self.has_shell_capability())
                 {
-                    retried_after_no_web_claim = true;
+                    retried_text_only_once = true;
                     forced_tool_retry = true;
 
                     messages.push(LlmMessage {
@@ -765,38 +748,7 @@ impl Agent {
                     messages.push(LlmMessage {
                         role: LlmRole::Developer,
                         content: LlmMessageContent::Text(
-                            "You have web access through tools (research, web_search, web_fetch). Do not claim that you cannot browse the internet. Use the available tools now. If a tool fails, report the concrete error and continue with the best available result."
-                                .to_string(),
-                        ),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                    });
-
-                    continue;
-                }
-
-                // Safety net: if the model claims missing permissions/install limits,
-                // force one retry with required tool-use and explicit stderr reporting.
-                if !retried_after_permission_claim
-                    && self.has_shell_capability()
-                    && Self::looks_like_permission_claim(content)
-                {
-                    retried_after_permission_claim = true;
-                    forced_tool_retry = true;
-
-                    messages.push(LlmMessage {
-                        role: LlmRole::Assistant,
-                        content: LlmMessageContent::Text(response.content),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                    });
-
-                    messages.push(LlmMessage {
-                        role: LlmRole::Developer,
-                        content: LlmMessageContent::Text(
-                            "Do not claim missing permissions unless a real tool call failed with permission/installation errors. Use shell_execute now and report the exact stderr and exit_code if it fails. If install is needed, attempt it (for example with sudo apt-get / pip) before responding."
+                            "You have tools available. Use them to fulfil the request instead of explaining limitations. If a tool call fails, report the concrete error."
                                 .to_string(),
                         ),
                         name: None,
