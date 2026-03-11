@@ -117,7 +117,7 @@ impl Skill for ResearchSkill {
         let sub_agent = Agent::subagent(Arc::clone(&self.llm), sub_skills, system_prompt);
 
         // Pass the task as the user message so the subagent processes it naturally.
-        let result = sub_agent.process(task, 0, None).await;
+        let result = sub_agent.process(task, 0, None, None).await;
 
         println!("[Research] Subagent done");
 

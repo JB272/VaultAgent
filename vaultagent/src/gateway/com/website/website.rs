@@ -243,6 +243,23 @@ impl Gateway for WebsiteClient {
         self.push_assistant_message(&msg).await?;
         Ok(())
     }
+
+    async fn stream_text(
+        &self,
+        _chat_id: i64,
+        text: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.set_stream_text(Some(text.to_string())).await?;
+        Ok(())
+    }
+
+    async fn clear_stream(
+        &self,
+        _chat_id: i64,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.set_stream_text(None).await?;
+        Ok(())
+    }
 }
 
 pub struct WebsiteSetup {

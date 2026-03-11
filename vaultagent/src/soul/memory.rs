@@ -24,9 +24,9 @@ impl Memory {
     // ── Reading ─────────────────────────────────────────────────
 
     /// Loads the curated long-term memory (MEMORY.md).
-    pub fn load_long_term(&self) -> String {
+    pub async fn load_long_term(&self) -> String {
         let path = self.soul_dir.join("MEMORY.md");
-        std::fs::read_to_string(&path).unwrap_or_default()
+        tokio::fs::read_to_string(&path).await.unwrap_or_default()
     }
 
     /// Loads today's daily log.
@@ -46,8 +46,8 @@ impl Memory {
     /// Builds the memory context that gets injected into the system prompt.
     /// Contains: MEMORY.md only. Past daily logs are accessed on-demand via
     /// `memory_search` / `memory_get` tools.
-    pub fn context_block(&self) -> String {
-        let long_term = self.load_long_term();
+    pub async fn context_block(&self) -> String {
+        let long_term = self.load_long_term().await;
         if long_term.trim().is_empty() {
             return String::new();
         }

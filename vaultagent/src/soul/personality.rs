@@ -36,16 +36,16 @@ impl Personality {
     }
 
     /// Returns the current system prompt text (re-read from disk).
-    pub fn system_prompt(&self) -> String {
-        match std::fs::read_to_string(&self.path) {
+    pub async fn system_prompt(&self) -> String {
+        match tokio::fs::read_to_string(&self.path).await {
             Ok(content) if !content.trim().is_empty() => content,
             _ => Self::default_onboarding_prompt().to_string(),
         }
     }
 
     /// True when a non-empty personality has been configured.
-    pub fn is_configured(&self) -> bool {
-        match std::fs::read_to_string(&self.path) {
+    pub async fn is_configured(&self) -> bool {
+        match tokio::fs::read_to_string(&self.path).await {
             Ok(content) => !content.trim().is_empty(),
             Err(_) => false,
         }

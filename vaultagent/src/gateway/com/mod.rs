@@ -35,6 +35,24 @@ pub trait Gateway: Send + Sync {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Err("File upload is not supported by this gateway".into())
     }
+
+    /// Push incremental streaming text to the user.
+    /// Gateways that don't support streaming can ignore this (no-op default).
+    async fn stream_text(
+        &self,
+        _chat_id: i64,
+        _text: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+
+    /// Clear any active streaming preview for the chat.
+    async fn clear_stream(
+        &self,
+        _chat_id: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
 }
 
 /// Registry of all active gateways.
@@ -57,32 +75,73 @@ impl GatewayRegistry {
     }
 
     pub async fn broadcast_reply(&self, chat_id: i64, text: &str) {
-        for gw in &self.gateways {
-            if let Err(e) = gw.send_reply(chat_id, text).await {
-                eprintln!("[Gateway:{}] Failed to send reply: {}", gw.name(), e);
-            }
-        }
+        let futures: Vec<_> = self
+            .gateways
+            .iter()
+            .map(|gw| async move {
+                if let Err(e) = gw.send_reply(chat_id, text).await {
+                    eprintln!("[Gateway:{}] Failed to send reply: {}", gw.name(), e);
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
     }
 
     pub async fn broadcast_typing(&self, chat_id: i64, typing: bool) {
-        for gw in &self.gateways {
-            if let Err(e) = gw.notify_typing(chat_id, typing).await {
-                eprintln!("[Gateway:{}] Failed to set typing state: {}", gw.name(), e);
-            }
-        }
+        let futures: Vec<_> = self
+            .gateways
+            .iter()
+            .map(|gw| async move {
+                if let Err(e) = gw.notify_typing(chat_id, typing).await {
+                    eprintln!("[Gateway:{}] Failed to set typing state: {}", gw.name(), e);
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
     }
 
     pub async fn broadcast_file(&self, chat_id: i64, path: &str, caption: Option<&str>) {
-        for gw in &self.gateways {
-            if let Err(e) = gw.send_file(chat_id, path, caption).await {
-                eprintln!(
-                    "[Gateway:{}] Failed to send file '{}': {}",
-                    gw.name(),
-                    path,
-                    e
-                );
-            }
-        }
+        let futures: Vec<_> = self
+            .gateways
+            .iter()
+            .map(|gw| async move {
+                if let Err(e) = gw.send_file(chat_id, path, caption).await {
+                    eprintln!(
+                        "[Gateway:{}] Failed to send file '{}': {}",
+                        gw.name(),
+                        path,
+                        e
+                    );
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
+    }
+
+    pub async fn broadcast_stream_text(&self, chat_id: i64, text: &str) {
+        let futures: Vec<_> = self
+            .gateways
+            .iter()
+            .map(|gw| async move {
+                if let Err(e) = gw.stream_text(chat_id, text).await {
+                    eprintln!("[Gateway:{}] Failed to stream text: {}", gw.name(), e);
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
+    }
+
+    pub async fn broadcast_clear_stream(&self, chat_id: i64) {
+        let futures: Vec<_> = self
+            .gateways
+            .iter()
+            .map(|gw| async move {
+                if let Err(e) = gw.clear_stream(chat_id).await {
+                    eprintln!("[Gateway:{}] Failed to clear stream: {}", gw.name(), e);
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
     }
 }
 

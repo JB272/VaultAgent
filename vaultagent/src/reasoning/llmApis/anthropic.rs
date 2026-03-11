@@ -1,12 +1,14 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
 use crate::reasoning::llm_interface::{
     LlmChatRequest, LlmChatResponse, LlmContentPart, LlmError, LlmInterface, LlmMessage,
-    LlmMessageContent, LlmRole, LlmToolCall, LlmToolChoice, LlmUsage,
+    LlmMessageContent, LlmRole, LlmStreamEvent, LlmToolCall, LlmToolChoice, LlmUsage,
 };
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -27,7 +29,11 @@ impl AnthropicClient {
         default_model: impl Into<String>,
     ) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("Failed to build HTTP client"),
             api_key: api_key.into(),
             base_url: base_url.into(),
             default_model: Arc::new(Mutex::new(default_model.into())),
@@ -226,23 +232,21 @@ impl AnthropicClient {
             4096
         }
     }
-}
 
-#[async_trait]
-impl LlmInterface for AnthropicClient {
-    async fn chat(&self, request: LlmChatRequest) -> Result<LlmChatResponse, LlmError> {
+    /// Builds the JSON payload shared by chat() and chat_stream().
+    fn build_payload(&self, request: &LlmChatRequest) -> Result<(Map<String, Value>, String), LlmError> {
         let model = if request.model.is_empty() {
             self.default_model.lock().unwrap().clone()
         } else {
-            request.model
+            request.model.clone()
         };
 
-        let (system_prompt, messages) = Self::map_messages(request.messages);
+        let (system_prompt, messages) = Self::map_messages(request.messages.clone());
 
         let mut payload = Map::new();
         payload.insert("model".to_string(), Value::String(model.clone()));
         payload.insert("messages".to_string(), Value::Array(messages));
-        // max_tokens is required by Anthropic's API — cap to model's limit.
+
         let model_max = Self::max_output_tokens(&model);
         let max_tokens = request
             .max_tokens
@@ -266,12 +270,11 @@ impl LlmInterface for AnthropicClient {
                 Value::Array(
                     request
                         .tools
-                        .into_iter()
+                        .iter()
                         .map(|tool| {
                             json!({
                                 "name": tool.name,
                                 "description": tool.description,
-                                // Anthropic uses "input_schema", not "parameters".
                                 "input_schema": tool.parameters_schema,
                             })
                         })
@@ -280,16 +283,212 @@ impl LlmInterface for AnthropicClient {
             );
         }
 
-        if let Some(tool_choice) = request.tool_choice {
+        if let Some(ref tool_choice) = request.tool_choice {
             let tc_value = match tool_choice {
                 LlmToolChoice::None => json!({"type": "none"}),
                 LlmToolChoice::Auto => json!({"type": "auto"}),
-                // Anthropic uses "any" for "required".
                 LlmToolChoice::Required => json!({"type": "any"}),
                 LlmToolChoice::Tool { name } => json!({"type": "tool", "name": name}),
             };
             payload.insert("tool_choice".to_string(), tc_value);
         }
+
+        Ok((payload, model))
+    }
+}
+
+/// Parses an Anthropic SSE stream and sends events to the channel.
+async fn parse_anthropic_sse(response: reqwest::Response, tx: mpsc::Sender<LlmStreamEvent>) {
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut model: Option<String> = None;
+    let mut finish_reason: Option<String> = None;
+    let mut input_tokens: Option<u32> = None;
+    let mut output_tokens: Option<u32> = None;
+    // Track current content block index for tool call deltas
+    let mut _current_tool_index: usize = 0;
+
+    while let Some(chunk_result) = stream.next().await {
+        let bytes = match chunk_result {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.send(LlmStreamEvent::Error(e.to_string())).await;
+                return;
+            }
+        };
+
+        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+        while let Some(boundary) = buffer.find("\n\n") {
+            let raw_event = buffer[..boundary].to_string();
+            buffer = buffer[boundary + 2..].to_string();
+
+            let mut event_type: Option<&str> = None;
+            let mut data_str: Option<String> = None;
+
+            for line in raw_event.lines() {
+                if let Some(et) = line.strip_prefix("event: ") {
+                    event_type = Some(et.trim());
+                } else if let Some(d) = line.strip_prefix("data: ") {
+                    data_str = Some(d.to_string());
+                }
+            }
+
+            // event_type borrows from raw_event, so convert to owned for matching
+            let event_type = event_type.map(|s| s.to_string());
+
+            let data: Option<Value> = data_str
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok());
+
+            match event_type.as_deref() {
+                Some("message_start") => {
+                    if let Some(ref data) = data {
+                        model = data
+                            .pointer("/message/model")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        input_tokens = data
+                            .pointer("/message/usage/input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32);
+                    }
+                }
+                Some("content_block_start") => {
+                    if let Some(ref data) = data {
+                        let index = data
+                            .get("index")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+
+                        if let Some(block) = data.get("content_block") {
+                            if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                                _current_tool_index = index;
+                                let _ = tx
+                                    .send(LlmStreamEvent::ToolCallDelta {
+                                        index,
+                                        id: block
+                                            .get("id")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                        name: block
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string()),
+                                        arguments_delta: String::new(),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                }
+                Some("content_block_delta") => {
+                    if let Some(ref data) = data {
+                        let index = data
+                            .get("index")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+
+                        if let Some(delta) = data.get("delta") {
+                            match delta.get("type").and_then(|v| v.as_str()) {
+                                Some("text_delta") => {
+                                    if let Some(text) =
+                                        delta.get("text").and_then(|v| v.as_str())
+                                    {
+                                        if !text.is_empty() {
+                                            let _ = tx
+                                                .send(LlmStreamEvent::TextDelta(
+                                                    text.to_string(),
+                                                ))
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Some("input_json_delta") => {
+                                    if let Some(partial) =
+                                        delta.get("partial_json").and_then(|v| v.as_str())
+                                    {
+                                        let _ = tx
+                                            .send(LlmStreamEvent::ToolCallDelta {
+                                                index,
+                                                id: None,
+                                                name: None,
+                                                arguments_delta: partial.to_string(),
+                                            })
+                                            .await;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Some("message_delta") => {
+                    if let Some(ref data) = data {
+                        finish_reason = data
+                            .pointer("/delta/stop_reason")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        output_tokens = data
+                            .pointer("/usage/output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32);
+                    }
+                }
+                Some("message_stop") => {
+                    // Send usage if available
+                    if input_tokens.is_some() || output_tokens.is_some() {
+                        let prompt = input_tokens;
+                        let completion = output_tokens;
+                        let total = match (prompt, completion) {
+                            (Some(p), Some(c)) => Some(p + c),
+                            _ => None,
+                        };
+                        let _ = tx
+                            .send(LlmStreamEvent::Usage(LlmUsage {
+                                prompt_tokens: prompt,
+                                completion_tokens: completion,
+                                total_tokens: total,
+                            }))
+                            .await;
+                    }
+                    let _ = tx
+                        .send(LlmStreamEvent::Done {
+                            finish_reason: finish_reason.take(),
+                            model: model.take(),
+                        })
+                        .await;
+                    return;
+                }
+                Some("error") => {
+                    let msg = data
+                        .as_ref()
+                        .and_then(|d| d.get("error"))
+                        .and_then(|e| e.get("message"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown streaming error")
+                        .to_string();
+                    let _ = tx.send(LlmStreamEvent::Error(msg)).await;
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Stream ended without message_stop
+    let _ = tx
+        .send(LlmStreamEvent::Done {
+            finish_reason: finish_reason.take(),
+            model: model.take(),
+        })
+        .await;
+}
+
+#[async_trait]
+impl LlmInterface for AnthropicClient {
+    async fn chat(&self, request: LlmChatRequest) -> Result<LlmChatResponse, LlmError> {
+        let (payload, _) = self.build_payload(&request)?;
 
         let response = self
             .client
@@ -308,8 +507,6 @@ impl LlmInterface for AnthropicClient {
         }
 
         let body: AnthropicResponse = response.json().await?;
-        let raw_response = serde_json::to_value(&body).ok();
-
         let mut text_parts: Vec<String> = Vec::new();
         let mut tool_calls: Vec<LlmToolCall> = Vec::new();
 
@@ -337,8 +534,36 @@ impl LlmInterface for AnthropicClient {
                 completion_tokens: Some(body.usage.output_tokens),
                 total_tokens: Some(body.usage.input_tokens + body.usage.output_tokens),
             }),
-            raw_response,
+            raw_response: None,
         })
+    }
+
+    async fn chat_stream(
+        &self,
+        request: LlmChatRequest,
+    ) -> Result<mpsc::Receiver<LlmStreamEvent>, LlmError> {
+        let (mut payload, _model) = self.build_payload(&request)?;
+        payload.insert("stream".to_string(), Value::Bool(true));
+
+        let response = self
+            .client
+            .post(format!("{}/messages", self.base_url.trim_end_matches('/')))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&Value::Object(payload))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(LlmError::Api(format!("status {}: {}", status, body)));
+        }
+
+        let (tx, rx) = mpsc::channel(64);
+        tokio::spawn(parse_anthropic_sse(response, tx));
+        Ok(rx)
     }
 
     fn provider_name(&self) -> &'static str {

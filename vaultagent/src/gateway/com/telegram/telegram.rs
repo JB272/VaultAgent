@@ -36,6 +36,8 @@ pub struct TelegramBot {
     transcription: Option<Arc<TranscriptionService>>,
     agent: Option<Arc<Agent>>,
     llm: Option<Arc<dyn LlmInterface>>,
+    /// Tracks in-flight streaming message_id per chat_id for progressive edits.
+    streaming_message_ids: Arc<Mutex<HashMap<i64, i64>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +77,7 @@ impl TelegramBot {
             transcription: None,
             agent: None,
             llm: None,
+            streaming_message_ids: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1024,7 +1027,22 @@ impl Gateway for TelegramBot {
         if !self.known_chat_ids.lock().await.contains(&chat_id) {
             return Ok(()); // Not our chat
         }
-        self.send_message(chat_id, text).await?;
+        // If we have an in-flight streaming message, edit it to the final text
+        // instead of sending a new message.
+        let stream_msg_id = self.streaming_message_ids.lock().await.remove(&chat_id);
+        if let Some(msg_id) = stream_msg_id {
+            let html = md_to_telegram_html(text);
+            // Ignore "message is not modified" — happens when the stream
+            // already pushed the complete text before the final reply.
+            if let Err(e) = self.edit_message_text(chat_id, msg_id, html, None).await {
+                let msg = e.to_string();
+                if !msg.contains("message is not modified") {
+                    return Err(e);
+                }
+            }
+        } else {
+            self.send_message(chat_id, text).await?;
+        }
         Ok(())
     }
 
@@ -1049,6 +1067,45 @@ impl Gateway for TelegramBot {
             return Ok(());
         }
         self.send_document(chat_id, path, caption).await?;
+        Ok(())
+    }
+
+    async fn stream_text(
+        &self,
+        chat_id: i64,
+        text: &str,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if !self.known_chat_ids.lock().await.contains(&chat_id) {
+            return Ok(());
+        }
+        let html = md_to_telegram_html(text);
+        let map = self.streaming_message_ids.lock().await;
+        if let Some(&msg_id) = map.get(&chat_id) {
+            // Edit existing streaming message
+            drop(map);
+            // Telegram errors on identical edits — ignore them silently.
+            let _ = self.edit_message_text(chat_id, msg_id, html, None).await;
+        } else {
+            // Send a new message and track its id
+            drop(map);
+            match self.send_message(chat_id, text).await {
+                Ok(msg) => {
+                    self.streaming_message_ids
+                        .lock()
+                        .await
+                        .insert(chat_id, msg.message_id);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    async fn clear_stream(
+        &self,
+        chat_id: i64,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        self.streaming_message_ids.lock().await.remove(&chat_id);
         Ok(())
     }
 }

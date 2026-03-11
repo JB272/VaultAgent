@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 
 use crate::reasoning::llm_interface::{
-    LlmChatRequest, LlmContentPart, LlmInterface, LlmMessage, LlmMessageContent, LlmRole,
-    LlmToolChoice,
+    LlmChatRequest, LlmChatResponse, LlmContentPart, LlmError, LlmInterface, LlmMessage,
+    LlmMessageContent, LlmRole, StreamAssembler, StreamDelta,
 };
 use crate::reasoning::usage::UsageCounter;
 use crate::skills::SkillRegistry;
@@ -61,10 +61,10 @@ impl Agent {
             .any(|n| n == "shell_execute")
     }
 
-    fn recent_upload_index_context(&self, max_items: usize) -> Option<String> {
+    async fn recent_upload_index_context(&self, max_items: usize) -> Option<String> {
         let soul = self.soul.as_ref()?;
         let index_path = soul.dir().join("uploads_index.md");
-        let raw = std::fs::read_to_string(index_path).ok()?;
+        let raw = tokio::fs::read_to_string(index_path).await.ok()?;
 
         let mut rows: Vec<String> = Vec::new();
         for line in raw.lines() {
@@ -231,21 +231,108 @@ impl Agent {
         let Some(ref path) = self.history_path else {
             return;
         };
-        let history = self.history.lock().await;
-        match serde_json::to_string(&*history) {
-            Ok(json) => {
-                if let Err(err) = std::fs::write(path, json) {
-                    eprintln!(
-                        "[Agent] Failed to write history to {}: {}",
-                        path.display(),
-                        err
-                    );
+        let json = {
+            let history = self.history.lock().await;
+            match serde_json::to_string(&*history) {
+                Ok(j) => j,
+                Err(err) => {
+                    eprintln!("[Agent] Failed to serialize history: {}", err);
+                    return;
                 }
             }
-            Err(err) => {
-                eprintln!("[Agent] Failed to serialize history: {}", err);
+        };
+        // Mutex released before the async write.
+        if let Err(err) = tokio::fs::write(path, json).await {
+            eprintln!(
+                "[Agent] Failed to write history to {}: {}",
+                path.display(),
+                err
+            );
+        }
+    }
+
+    /// Retries an LLM call on transient errors (429, 500, 502, 503, timeout).
+    async fn chat_with_retry(
+        llm: &dyn LlmInterface,
+        request: LlmChatRequest,
+        max_retries: u32,
+    ) -> Result<LlmChatResponse, LlmError> {
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_secs(2u64.pow(attempt.min(3)));
+                println!(
+                    "[Agent] LLM transient error, retry {}/{} in {:?}",
+                    attempt, max_retries, delay
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            match llm.chat(request.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(ref e) if attempt < max_retries && Self::is_retryable_error(e) => {
+                    eprintln!("[Agent] Transient LLM error: {}", e);
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
         }
+        unreachable!()
+    }
+
+    fn is_retryable_error(err: &LlmError) -> bool {
+        match err {
+            LlmError::Http(_) => true, // network/timeout errors
+            LlmError::Api(msg) => {
+                msg.contains("status 429")
+                    || msg.contains("status 500")
+                    || msg.contains("status 502")
+                    || msg.contains("status 503")
+                    || msg.contains("status 529") // Anthropic overloaded
+            }
+            _ => false,
+        }
+    }
+
+    /// Streaming variant of chat_with_retry.
+    /// Retries only on connection-level errors (not mid-stream failures).
+    async fn chat_stream_with_retry(
+        llm: &dyn LlmInterface,
+        request: LlmChatRequest,
+        max_retries: u32,
+        delta_tx: Option<&tokio::sync::mpsc::Sender<StreamDelta>>,
+    ) -> Result<LlmChatResponse, LlmError> {
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                let delay = std::time::Duration::from_secs(2u64.pow(attempt.min(3)));
+                println!(
+                    "[Agent] LLM stream transient error, retry {}/{} in {:?}",
+                    attempt, max_retries, delay
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            match llm.chat_stream(request.clone()).await {
+                Ok(mut rx) => {
+                    let mut assembler = StreamAssembler::new();
+                    match assembler.consume(&mut rx, delta_tx).await {
+                        Ok(response) => return Ok(response),
+                        Err(e) => {
+                            if attempt < max_retries {
+                                eprintln!("[Agent] Stream error: {}", e);
+                                continue;
+                            }
+                            return Err(LlmError::Api(e));
+                        }
+                    }
+                }
+                Err(ref e) if attempt < max_retries && Self::is_retryable_error(e) => {
+                    eprintln!("[Agent] Transient LLM stream error: {}", e);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
     }
 
     /// Checks if the context window is getting full and, if so, summarises
@@ -584,7 +671,13 @@ impl Agent {
     /// `chat_id` is passed as context so skills like cron_add know
     /// which chat to send the response to.
     /// `image_url` — optional base64 data-URL of an attached image (vision).
-    pub async fn process(&self, user_text: &str, chat_id: i64, image_url: Option<&str>) -> String {
+    pub async fn process(
+        &self,
+        user_text: &str,
+        chat_id: i64,
+        image_url: Option<&str>,
+        stream_tx: Option<tokio::sync::mpsc::Sender<StreamDelta>>,
+    ) -> String {
         let Some(llm) = &self.llm else {
             return "LLM is not configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY to receive responses.".to_string();
         };
@@ -638,14 +731,16 @@ impl Agent {
                 .soul
                 .as_ref()
                 .expect("Agent must have either a Soul or a custom_system_prompt");
-            let base_prompt = soul.system_prompt();
-            let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
-            let now_utc = chrono::Utc::now().to_rfc3339();
+            let base_prompt = soul.system_prompt().await;
+            let user_tz_str = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
+            let tz: chrono_tz::Tz = user_tz_str.parse().unwrap_or(chrono_tz::Europe::Berlin);
+            let now_local = chrono::Utc::now().with_timezone(&tz);
+            let now_str = now_local.format("%Y-%m-%d %H:%M (%Z)").to_string();
             let mut prompt = format!(
-                "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'store these files'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n- Telegram uploads are persisted under `skills/uploads`.\n- Upload references are also logged to `soul/uploads_index.md`.\n- If the user refers to an earlier upload without an exact path (for example \"the memo from earlier\"), first inspect `soul/uploads_index.md` and/or `skills/uploads` using tools.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
-                base_prompt, chat_id, user_tz, now_utc, user_tz
+                "{}\n\n## Current Session\n- Chat ID: {}\n- Current time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'store these files'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n- Telegram uploads are persisted under `skills/uploads`.\n- Upload references are also logged to `soul/uploads_index.md`.\n- If the user refers to an earlier upload without an exact path (for example \"the memo from earlier\"), first inspect `soul/uploads_index.md` and/or `skills/uploads` using tools.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
+                base_prompt, chat_id, now_str, user_tz_str
             );
-            if let Some(upload_context) = self.recent_upload_index_context(12) {
+            if let Some(upload_context) = self.recent_upload_index_context(12).await {
                 prompt.push_str(
                     "\n\n## Recent Upload Index (Structured)\n\
 - The following entries are authoritative records from `soul/uploads_index.md`.\n\
@@ -670,27 +765,38 @@ impl Agent {
             messages.extend(history.clone());
         }
 
-        let mut forced_tool_retry = false;
-        let mut retried_text_only_once = false;
+        // (forced tool retry removed — it caused 2 extra LLM calls for every
+        //  simple greeting.  The system prompt already instructs tool usage.)
 
-        for _ in 0..self.max_rounds {
+        // Refresh worker skill definitions once per process() call (not every round).
+        self.skills.refresh_remote_definitions().await;
+
+        for round in 0..self.max_rounds {
+            println!("[Agent] Round {}/{}", round + 1, self.max_rounds);
             if Self::stop_requested(start_stop_epoch) {
                 return "⏹ Stopped.".to_string();
             }
 
-            // Ensure dynamically created worker skills are visible to the model.
-            self.skills.refresh_remote_definitions().await;
-
             let mut request = LlmChatRequest::new("", messages.clone());
             request.tools = self.skills.tool_definitions();
-            if forced_tool_retry {
-                request.tool_choice = Some(LlmToolChoice::Required);
-                forced_tool_retry = false;
-            }
 
-            let response = match llm.chat(request).await {
-                Ok(value) => value,
-                Err(err) => return format!("LLM call failed: {}", err),
+            let response = if stream_tx.is_some() {
+                match Self::chat_stream_with_retry(
+                    &**llm,
+                    request,
+                    2,
+                    stream_tx.as_ref(),
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(err) => return format!("LLM call failed: {}", err),
+                }
+            } else {
+                match Self::chat_with_retry(&**llm, request, 2).await {
+                    Ok(value) => value,
+                    Err(err) => return format!("LLM call failed: {}", err),
+                }
             };
 
             if Self::stop_requested(start_stop_epoch) {
@@ -716,6 +822,11 @@ impl Agent {
                 // without sending anything to the user. Add to messages and
                 // loop so it can issue more tool calls or produce a real reply.
                 if Self::is_no_reply_signal(content) {
+                    println!("[Agent] NO_REPLY signal — looping for next round");
+                    // Clear streaming preview — NO_REPLY means we loop again.
+                    if let Some(ref tx) = stream_tx {
+                        let _ = tx.send(StreamDelta::Clear).await;
+                    }
                     messages.push(LlmMessage {
                         role: LlmRole::Assistant,
                         content: LlmMessageContent::Text(content.to_string()),
@@ -726,37 +837,12 @@ impl Agent {
                     continue;
                 }
 
-                // Language-agnostic safety net: if the model produced a text-only
-                // response while tools are available, force one retry with
-                // tool_choice=required.  This prevents the model from refusing
-                // to act (e.g. claiming no internet/permissions) regardless of
-                // the language it answers in.
-                if !retried_text_only_once
-                    && (self.has_web_capability() || self.has_shell_capability())
-                {
-                    retried_text_only_once = true;
-                    forced_tool_retry = true;
-
-                    messages.push(LlmMessage {
-                        role: LlmRole::Assistant,
-                        content: LlmMessageContent::Text(response.content),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                    });
-
-                    messages.push(LlmMessage {
-                        role: LlmRole::Developer,
-                        content: LlmMessageContent::Text(
-                            "You have tools available. Use them to fulfil the request instead of explaining limitations. If a tool call fails, report the concrete error."
-                                .to_string(),
-                        ),
-                        name: None,
-                        tool_call_id: None,
-                        tool_calls: Vec::new(),
-                    });
-
-                    continue;
+                // Log when the model answers with text while tools are available.
+                if self.has_web_capability() || self.has_shell_capability() {
+                    println!(
+                        "[Agent] Text-only response (tools available) — accepting as final answer: {}",
+                        Self::preview_text(content, 120)
+                    );
                 }
 
                 if content.is_empty() {
@@ -786,43 +872,60 @@ impl Agent {
                 return content.to_string();
             }
 
-            // Execute tool calls
-            let tool_calls = response.tool_calls.clone();
+            // Execute tool calls concurrently.
+            let tool_calls_vec = response.tool_calls;
+            println!("[Agent] {} tool call(s) to execute", tool_calls_vec.len());
+
+            // Push the assistant message (with tool_calls) before executing.
             messages.push(LlmMessage {
                 role: LlmRole::Assistant,
                 content: LlmMessageContent::Text(response.content),
                 name: None,
                 tool_call_id: None,
-                tool_calls,
+                tool_calls: tool_calls_vec.clone(),
             });
 
-            for tool_call in response.tool_calls {
-                if Self::stop_requested(start_stop_epoch) {
-                    return "⏹ Stopped.".to_string();
-                }
+            // Launch all tool executions in parallel.
+            let futures: Vec<_> = tool_calls_vec
+                .iter()
+                .map(|tool_call| {
+                    let tool_name = tool_call.name.clone();
+                    let args = tool_call.arguments.clone();
+                    let args_preview =
+                        Self::preview_text(&args.to_string(), 500).replace('\n', "\\n");
+                    println!("[Agent][Tool] Calling {} args={}", tool_name, args_preview);
 
-                let tool_name = tool_call.name.clone();
-                let args_preview =
-                    Self::preview_text(&tool_call.arguments.to_string(), 500).replace('\n', "\\n");
-                println!("[Agent][Tool] Calling {} args={}", tool_name, args_preview);
+                    async move {
+                        let result =
+                            match self.skills.execute(&tool_name, &args).await {
+                                Some(result) => result,
+                                None => json!({
+                                    "ok": false,
+                                    "error": format!("Unknown tool: {}", tool_name),
+                                })
+                                .to_string(),
+                            };
+                        let result_preview =
+                            Self::preview_text(&result, 3000).replace('\n', "\\n");
+                        println!("[Agent][Tool] Result {} => {}", tool_name, result_preview);
+                        result
+                    }
+                })
+                .collect();
 
-                let result = match self.skills.execute(&tool_name, &tool_call.arguments).await {
-                    Some(result) => result,
-                    None => json!({
-                        "ok": false,
-                        "error": format!("Unknown tool: {}", tool_name),
-                    })
-                    .to_string(),
-                };
+            let results = futures_util::future::join_all(futures).await;
 
-                let result_preview = Self::preview_text(&result, 3000).replace('\n', "\\n");
-                println!("[Agent][Tool] Result {} => {}", tool_name, result_preview);
+            if Self::stop_requested(start_stop_epoch) {
+                return "⏹ Stopped.".to_string();
+            }
 
+            // Append results in original order (join_all preserves order).
+            for (i, result) in results.into_iter().enumerate() {
                 messages.push(LlmMessage {
                     role: LlmRole::Tool,
                     content: LlmMessageContent::Text(result),
-                    name: Some(tool_name),
-                    tool_call_id: tool_call.id,
+                    name: Some(tool_calls_vec[i].name.clone()),
+                    tool_call_id: tool_calls_vec[i].id.clone(),
                     tool_calls: Vec::new(),
                 });
             }

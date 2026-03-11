@@ -212,17 +212,33 @@ async fn execute(
         req.name, req.arguments
     );
 
-    // First attempt with current registry.
-    let first_try = {
+    // Look up skill and release lock immediately so execution
+    // does not block other concurrent requests.
+    let skill = {
         let reg = state.skills.lock().await;
-        reg.execute(&req.name, &req.arguments).await
+        reg.find_skill(&req.name)
+    };
+
+    let first_try = match skill {
+        Some(s) => Some(s.execute(&req.arguments).await),
+        None => {
+            // Fall through to remote proxy if available.
+            let reg = state.skills.lock().await;
+            reg.execute(&req.name, &req.arguments).await
+        }
     };
 
     // If unknown, try hot-reloading Python skills once and retry.
     let result = if first_try.is_none() {
         reload_python_skills_if_needed(&state).await;
-        let reg = state.skills.lock().await;
-        reg.execute(&req.name, &req.arguments).await
+        let skill = {
+            let reg = state.skills.lock().await;
+            reg.find_skill(&req.name)
+        };
+        match skill {
+            Some(s) => Some(s.execute(&req.arguments).await),
+            None => None,
+        }
     } else {
         first_try
     };

@@ -52,24 +52,24 @@ impl Soul {
     }
 
     /// Reads the constitution (re-read on every call so edits take effect).
-    fn constitution(&self) -> Option<String> {
-        self.constitution_path.as_ref().and_then(|p| {
-            std::fs::read_to_string(p)
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-        })
+    async fn constitution(&self) -> Option<String> {
+        let p = self.constitution_path.as_ref()?;
+        tokio::fs::read_to_string(p)
+            .await
+            .ok()
+            .filter(|s| !s.trim().is_empty())
     }
 
     /// Builds the complete system prompt:
     /// Constitution + Personality + current memory context.
-    pub fn system_prompt(&self) -> String {
+    pub async fn system_prompt(&self) -> String {
         let mut parts = Vec::new();
 
-        if let Some(constitution) = self.constitution() {
+        if let Some(constitution) = self.constitution().await {
             parts.push(constitution);
         }
 
-        if !self.personality.is_configured() {
+        if !self.personality.is_configured().await {
             parts.push(
                 "## Mandatory Onboarding Mode\n\
 personality.md is currently empty or missing.\n\
@@ -82,9 +82,9 @@ then save key facts with `memory_save`."
             );
         }
 
-        parts.push(self.personality.system_prompt());
+        parts.push(self.personality.system_prompt().await);
 
-        let memory_block = self.memory.context_block();
+        let memory_block = self.memory.context_block().await;
         if !memory_block.is_empty() {
             parts.push(memory_block);
         }

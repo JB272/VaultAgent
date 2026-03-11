@@ -14,7 +14,7 @@ use reasoning::agent::Agent;
 use reasoning::llm_apis::anthropic::AnthropicClient;
 use reasoning::llm_apis::multi_provider::MultiProvider;
 use reasoning::llm_apis::openai::OpenAiCompatibleClient;
-use reasoning::llm_interface::LlmInterface;
+use reasoning::llm_interface::{LlmInterface, StreamDelta};
 use skills::SkillRegistry;
 use skills::default_skills::email_mailbox::EmailMailboxSkill;
 use skills::default_skills::github::GitHubSkill;
@@ -207,6 +207,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("[Main][Cron] Scheduler started");
 
     // ── Event Loop ──────────────────────────────────────
+    // Per-chat semaphore: ensures only one process() runs per chat_id at a time,
+    // while different conversations can be processed concurrently.
+    let chat_locks: Arc<tokio::sync::Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Semaphore>>>> =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
     loop {
         let action = incoming.pop().await;
         match action {
@@ -217,43 +222,109 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 );
 
                 // ── Handle slash commands (works across all channels) ──
-                let trimmed = chat.text.trim();
-                if let Some(reply) = handle_global_command(trimmed, &agent).await {
+                let trimmed = chat.text.trim().to_string();
+                if let Some(reply) = handle_global_command(&trimmed, &agent).await {
                     gateways.broadcast_reply(chat.chat_id, &reply).await;
                     continue;
                 }
 
-                let gw = Arc::clone(&gateways);
-                let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
-                let chat_id = chat.chat_id;
+                let agent = Arc::clone(&agent);
+                let gateways = Arc::clone(&gateways);
+                let chat_locks = Arc::clone(&chat_locks);
 
-                // Keep re-sending typing every 4s — Telegram hides it after ~5s.
-                let typing_task = tokio::spawn(async move {
-                    loop {
-                        gw.broadcast_typing(chat_id, true).await;
-                        tokio::select! {
-                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
-                            _ = &mut cancel_rx => break,
+                tokio::spawn(async move {
+                    // Acquire per-chat semaphore (sequential per conversation).
+                    let semaphore = {
+                        let mut locks = chat_locks.lock().await;
+                        locks
+                            .entry(chat.chat_id)
+                            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
+                            .clone()
+                    };
+                    let _permit = semaphore.acquire().await.unwrap();
+
+                    let gw = Arc::clone(&gateways);
+                    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                    let chat_id = chat.chat_id;
+
+                    // Keep re-sending typing every 4s — Telegram hides it after ~5s.
+                    let typing_task = tokio::spawn(async move {
+                        loop {
+                            gw.broadcast_typing(chat_id, true).await;
+                            tokio::select! {
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                                _ = &mut cancel_rx => break,
+                            }
                         }
-                    }
-                });
+                    });
 
-                let raw_reply = agent
-                    .process(&chat.text, chat.chat_id, chat.image_url.as_deref())
-                    .await;
-                let _ = cancel_tx.send(());
-                typing_task.await.ok();
+                    // Stream consumer: accumulates text deltas and pushes to gateways
+                    // with a throttle so we don't flood the UI / Telegram API.
+                    let (stream_tx, mut stream_rx) =
+                        tokio::sync::mpsc::channel::<StreamDelta>(128);
+                    let gw_stream = Arc::clone(&gateways);
+                    let stream_task = tokio::spawn(async move {
+                        let mut accumulated = String::new();
+                        let throttle = std::time::Duration::from_millis(500);
+                        let mut last_push = tokio::time::Instant::now();
 
-                let (reply_text, upload_path, upload_caption) = parse_upload_directive(&raw_reply);
-                if let Some(path) = upload_path {
-                    gateways
-                        .broadcast_file(chat.chat_id, &path, upload_caption.as_deref())
+                        while let Some(delta) = stream_rx.recv().await {
+                            match delta {
+                                StreamDelta::Text(t) => {
+                                    accumulated.push_str(&t);
+                                    if last_push.elapsed() >= throttle {
+                                        gw_stream
+                                            .broadcast_stream_text(chat_id, &accumulated)
+                                            .await;
+                                        last_push = tokio::time::Instant::now();
+                                    }
+                                }
+                                StreamDelta::Clear => {
+                                    accumulated.clear();
+                                    // Don't call broadcast_clear_stream here —
+                                    // the next stream_text will overwrite the
+                                    // existing Telegram message with fresh content.
+                                }
+                            }
+                        }
+                        // Final flush
+                        if !accumulated.is_empty() {
+                            gw_stream
+                                .broadcast_stream_text(chat_id, &accumulated)
+                                .await;
+                        }
+                    });
+
+                    let raw_reply = agent
+                        .process(
+                            &chat.text,
+                            chat.chat_id,
+                            chat.image_url.as_deref(),
+                            Some(stream_tx),
+                        )
                         .await;
-                }
-                if !reply_text.trim().is_empty() {
-                    gateways.broadcast_reply(chat.chat_id, &reply_text).await;
-                }
-                gateways.broadcast_typing(chat.chat_id, false).await;
+                    let _ = cancel_tx.send(());
+                    typing_task.await.ok();
+                    stream_task.await.ok();
+
+                    let (reply_text, upload_path, upload_caption) =
+                        parse_upload_directive(&raw_reply);
+                    if let Some(path) = upload_path {
+                        gateways
+                            .broadcast_file(chat.chat_id, &path, upload_caption.as_deref())
+                            .await;
+                    }
+                    if !reply_text.trim().is_empty() {
+                        // send_reply will edit the streaming message if one exists
+                        // (Telegram), or push the final text (Website).
+                        gateways.broadcast_reply(chat.chat_id, &reply_text).await;
+                    }
+                    // Clear streaming previews AFTER send_reply so Telegram can
+                    // find and edit the streaming message instead of creating a
+                    // new one. For Website this clears the stream preview overlay.
+                    gateways.broadcast_clear_stream(chat.chat_id).await;
+                    gateways.broadcast_typing(chat.chat_id, false).await;
+                });
             }
             IncomingAction::Agent(_) => {}
             IncomingAction::Cron(cron_action) => {
@@ -262,38 +333,57 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     cron_action.job_name, cron_action.chat_id
                 );
 
-                let gw = Arc::clone(&gateways);
-                let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
-                let chat_id = cron_action.chat_id;
+                let agent = Arc::clone(&agent);
+                let gateways = Arc::clone(&gateways);
+                let chat_locks = Arc::clone(&chat_locks);
 
-                let typing_task = tokio::spawn(async move {
-                    loop {
-                        gw.broadcast_typing(chat_id, true).await;
-                        tokio::select! {
-                            _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
-                            _ = &mut cancel_rx => break,
+                tokio::spawn(async move {
+                    // Acquire per-chat semaphore (sequential per conversation).
+                    let semaphore = {
+                        let mut locks = chat_locks.lock().await;
+                        locks
+                            .entry(cron_action.chat_id)
+                            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(1)))
+                            .clone()
+                    };
+                    let _permit = semaphore.acquire().await.unwrap();
+
+                    let gw = Arc::clone(&gateways);
+                    let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                    let chat_id = cron_action.chat_id;
+
+                    let typing_task = tokio::spawn(async move {
+                        loop {
+                            gw.broadcast_typing(chat_id, true).await;
+                            tokio::select! {
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                                _ = &mut cancel_rx => break,
+                            }
                         }
+                    });
+
+                    let raw_reply = agent
+                        .process(&cron_action.prompt, cron_action.chat_id, None, None)
+                        .await;
+                    let _ = cancel_tx.send(());
+                    typing_task.await.ok();
+
+                    let (reply_text, upload_path, upload_caption) =
+                        parse_upload_directive(&raw_reply);
+                    if let Some(path) = upload_path {
+                        gateways
+                            .broadcast_file(cron_action.chat_id, &path, upload_caption.as_deref())
+                            .await;
                     }
+                    if !reply_text.trim().is_empty() {
+                        gateways
+                            .broadcast_reply(cron_action.chat_id, &reply_text)
+                            .await;
+                    }
+                    gateways
+                        .broadcast_typing(cron_action.chat_id, false)
+                        .await;
                 });
-
-                let raw_reply = agent
-                    .process(&cron_action.prompt, cron_action.chat_id, None)
-                    .await;
-                let _ = cancel_tx.send(());
-                typing_task.await.ok();
-
-                let (reply_text, upload_path, upload_caption) = parse_upload_directive(&raw_reply);
-                if let Some(path) = upload_path {
-                    gateways
-                        .broadcast_file(cron_action.chat_id, &path, upload_caption.as_deref())
-                        .await;
-                }
-                if !reply_text.trim().is_empty() {
-                    gateways
-                        .broadcast_reply(cron_action.chat_id, &reply_text)
-                        .await;
-                }
-                gateways.broadcast_typing(cron_action.chat_id, false).await;
             }
         }
     }

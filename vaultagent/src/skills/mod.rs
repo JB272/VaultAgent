@@ -3,6 +3,7 @@ pub mod python_skill;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::reasoning::llm_interface::LlmToolDefinition;
 
@@ -199,7 +200,7 @@ impl RemoteSkillProxy {
 /// - **Local**: skills execute in-process (default, also used by the worker)
 /// - **Hybrid**: local skills + remote proxy to a sandbox worker
 pub struct SkillRegistry {
-    skills: Vec<Box<dyn Skill>>,
+    skills: Vec<Arc<dyn Skill>>,
     remote: Option<RemoteSkillProxy>,
 }
 
@@ -227,7 +228,7 @@ impl SkillRegistry {
 
     /// Register a skill — builder pattern, returns `&mut Self`.
     pub fn add<S: Skill + 'static>(&mut self, skill: S) -> &mut Self {
-        self.skills.push(Box::new(skill));
+        self.skills.push(Arc::new(skill));
         self
     }
 
@@ -262,15 +263,22 @@ impl SkillRegistry {
         names
     }
 
+    /// Finds a local skill by name. Returns an Arc clone (cheap) so the caller
+    /// can execute it without holding any registry lock.
+    pub fn find_skill(&self, name: &str) -> Option<Arc<dyn Skill>> {
+        self.skills
+            .iter()
+            .find(|s| s.definition().name == name)
+            .cloned()
+    }
+
     /// Executes a tool call by name.
     /// Returns `None` if no skill with that name is registered.
     /// Local skills are checked first, then the remote worker.
     pub async fn execute(&self, name: &str, arguments: &Value) -> Option<String> {
         // Try local skills first
-        for skill in &self.skills {
-            if skill.definition().name == name {
-                return Some(skill.execute(arguments).await);
-            }
+        if let Some(skill) = self.find_skill(name) {
+            return Some(skill.execute(arguments).await);
         }
         // Fall through to remote worker
         if let Some(ref remote) = self.remote {

@@ -116,7 +116,7 @@ impl Skill for SpawnSubagentSkill {
 
         let sub_agent = Agent::subagent(Arc::clone(&self.llm), sub_skills, system_prompt);
 
-        let result = sub_agent.process(task, 0, None).await;
+        let result = sub_agent.process(task, 0, None, None).await;
 
         println!("[SpawnSubagent] Done");
 

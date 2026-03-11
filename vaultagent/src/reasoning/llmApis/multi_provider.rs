@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 
-use crate::reasoning::llm_interface::{LlmChatRequest, LlmChatResponse, LlmError, LlmInterface};
+use crate::reasoning::llm_interface::{
+    LlmChatRequest, LlmChatResponse, LlmError, LlmInterface, LlmStreamEvent,
+};
 
 /// Wraps multiple LLM providers and delegates to the currently active one.
 /// Model switching automatically selects the correct backend.
@@ -47,6 +49,13 @@ impl MultiProvider {
 impl LlmInterface for MultiProvider {
     async fn chat(&self, request: LlmChatRequest) -> Result<LlmChatResponse, LlmError> {
         self.active_backend().chat(request).await
+    }
+
+    async fn chat_stream(
+        &self,
+        request: LlmChatRequest,
+    ) -> Result<tokio::sync::mpsc::Receiver<LlmStreamEvent>, LlmError> {
+        self.active_backend().chat_stream(request).await
     }
 
     fn provider_name(&self) -> &'static str {
