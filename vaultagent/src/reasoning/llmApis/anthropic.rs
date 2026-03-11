@@ -234,7 +234,10 @@ impl AnthropicClient {
     }
 
     /// Builds the JSON payload shared by chat() and chat_stream().
-    fn build_payload(&self, request: &LlmChatRequest) -> Result<(Map<String, Value>, String), LlmError> {
+    fn build_payload(
+        &self,
+        request: &LlmChatRequest,
+    ) -> Result<(Map<String, Value>, String), LlmError> {
         let model = if request.model.is_empty() {
             self.default_model.lock().unwrap().clone()
         } else {
@@ -356,10 +359,8 @@ async fn parse_anthropic_sse(response: reqwest::Response, tx: mpsc::Sender<LlmSt
                 }
                 Some("content_block_start") => {
                     if let Some(ref data) = data {
-                        let index = data
-                            .get("index")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
+                        let index =
+                            data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
                         if let Some(block) = data.get("content_block") {
                             if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
@@ -384,22 +385,16 @@ async fn parse_anthropic_sse(response: reqwest::Response, tx: mpsc::Sender<LlmSt
                 }
                 Some("content_block_delta") => {
                     if let Some(ref data) = data {
-                        let index = data
-                            .get("index")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
+                        let index =
+                            data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
                         if let Some(delta) = data.get("delta") {
                             match delta.get("type").and_then(|v| v.as_str()) {
                                 Some("text_delta") => {
-                                    if let Some(text) =
-                                        delta.get("text").and_then(|v| v.as_str())
-                                    {
+                                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                         if !text.is_empty() {
                                             let _ = tx
-                                                .send(LlmStreamEvent::TextDelta(
-                                                    text.to_string(),
-                                                ))
+                                                .send(LlmStreamEvent::TextDelta(text.to_string()))
                                                 .await;
                                         }
                                     }

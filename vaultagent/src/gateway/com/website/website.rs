@@ -253,10 +253,7 @@ impl Gateway for WebsiteClient {
         Ok(())
     }
 
-    async fn clear_stream(
-        &self,
-        _chat_id: i64,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn clear_stream(&self, _chat_id: i64) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.set_stream_text(None).await?;
         Ok(())
     }

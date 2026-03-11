@@ -209,8 +209,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // ── Event Loop ──────────────────────────────────────
     // Per-chat semaphore: ensures only one process() runs per chat_id at a time,
     // while different conversations can be processed concurrently.
-    let chat_locks: Arc<tokio::sync::Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Semaphore>>>> =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let chat_locks: Arc<
+        tokio::sync::Mutex<std::collections::HashMap<i64, Arc<tokio::sync::Semaphore>>>,
+    > = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
     loop {
         let action = incoming.pop().await;
@@ -260,8 +261,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
                     // Stream consumer: accumulates text deltas and pushes to gateways
                     // with a throttle so we don't flood the UI / Telegram API.
-                    let (stream_tx, mut stream_rx) =
-                        tokio::sync::mpsc::channel::<StreamDelta>(128);
+                    let (stream_tx, mut stream_rx) = tokio::sync::mpsc::channel::<StreamDelta>(128);
                     let gw_stream = Arc::clone(&gateways);
                     let stream_task = tokio::spawn(async move {
                         let mut accumulated = String::new();
@@ -289,9 +289,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         }
                         // Final flush
                         if !accumulated.is_empty() {
-                            gw_stream
-                                .broadcast_stream_text(chat_id, &accumulated)
-                                .await;
+                            gw_stream.broadcast_stream_text(chat_id, &accumulated).await;
                         }
                     });
 
@@ -380,9 +378,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             .broadcast_reply(cron_action.chat_id, &reply_text)
                             .await;
                     }
-                    gateways
-                        .broadcast_typing(cron_action.chat_id, false)
-                        .await;
+                    gateways.broadcast_typing(cron_action.chat_id, false).await;
                 });
             }
         }
