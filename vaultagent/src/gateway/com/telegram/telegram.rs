@@ -239,8 +239,8 @@ impl TelegramBot {
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         // Register commands with Telegram so they show in the command menu.
         let commands = [
-            ("new", "Neue Konversation starten"),
-            ("window", "Context Window Auslastung anzeigen"),
+            ("new", "Start a new conversation"),
+            ("window", "Show context window usage"),
             ("tools", "List all available skills/tools"),
             ("stats", "Today's LLM token usage"),
             ("models", "Show or switch the active LLM model"),
@@ -894,11 +894,11 @@ async fn handle_command(text: &str, bot: &TelegramBot, _chat_id: i64) -> Option<
     }
 
     if text == "/new" {
-        let mut reply = "🧹 Konversation zurückgesetzt. Neuer Chat gestartet!".to_string();
+        let mut reply = "🧹 Conversation reset. New chat started!".to_string();
         if let Some(ref agent) = bot.agent {
             agent.clear_history().await;
             if let Some(model) = agent.active_model_label() {
-                reply.push_str(&format!("\nAktives Modell: <code>{model}</code>"));
+                reply.push_str(&format!("\nActive model: <code>{model}</code>"));
             }
         }
         return Some(CommandResult::Text(reply));
@@ -1353,7 +1353,13 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
             }
             Err(err) => {
                 eprintln!("[Telegram][Voice] Failed to download audio file: {}", err);
-                None
+                Some(ExtractedContent {
+                    text: format!(
+                        "[Voice message]\nCould not download the audio file from Telegram: {}",
+                        err
+                    ),
+                    image_url: None,
+                })
             }
         },
         Err(err) => {
@@ -1361,9 +1367,29 @@ async fn extract_content(bot: &TelegramBot, message: &Message) -> Option<Extract
                 "[Telegram][Voice] Failed to fetch Telegram file path: {}",
                 err
             );
-            None
+            Some(ExtractedContent {
+                text: format_voice_fetch_error(&err.to_string()),
+                image_url: None,
+            })
         }
     }
+}
+
+fn format_voice_fetch_error(err: &str) -> String {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("file is too big") {
+        return "[Voice message]\n\
+Telegram could not fetch the memo: file is too large for `getFile`.\n\n\
+Background: With the standard cloud Bot API, bots can only download files up to 20 MB.\n\
+Please send a shorter/split memo or a smaller file.\n\
+Alternative: run a local Bot API server (no download limit there)."
+            .to_string();
+    }
+
+    format!(
+        "[Voice message]\nCould not resolve the Telegram file path: {}",
+        err
+    )
 }
 
 async fn persist_telegram_file(

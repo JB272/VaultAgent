@@ -454,6 +454,15 @@ pub async fn start_worker() -> Result<(), Box<dyn std::error::Error + Send + Syn
         skills.add(skill);
     }
 
+    // Ensure upload target exists so agents can always inspect it, even before
+    // the first file upload is received.
+    if let Err(err) = tokio::fs::create_dir_all("/workspace/skills/uploads").await {
+        eprintln!(
+            "[Worker] Failed to create /workspace/skills/uploads: {}",
+            err
+        );
+    }
+
     let skill_count = skills.skill_names().len();
 
     // ── Start HTTP server ────────────────────────────────

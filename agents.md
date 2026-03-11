@@ -40,6 +40,7 @@ This file defines how coding agents should work in this repository.
 4. Do not hardcode secrets or commit `.env` values.
 5. For user-facing behavior changes, include clear fallback behavior.
 6. For queue/concurrency changes, avoid message loss and preserve chat ordering.
+7. Default language is english but we want to make it multilingual.
 
 ## Definition of Done
 

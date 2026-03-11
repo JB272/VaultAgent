@@ -85,6 +85,58 @@ impl Agent {
             || t.contains("can't install")
     }
 
+    fn recent_upload_index_context(&self, max_items: usize) -> Option<String> {
+        let soul = self.soul.as_ref()?;
+        let index_path = soul.dir().join("uploads_index.md");
+        let raw = std::fs::read_to_string(index_path).ok()?;
+
+        let mut rows: Vec<String> = Vec::new();
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("- ") {
+                continue;
+            }
+
+            let mut ts = "unknown".to_string();
+            let mut kind = "unknown".to_string();
+            let mut name = "unknown".to_string();
+            let mut path = None::<String>;
+
+            for (idx, part) in trimmed.trim_start_matches("- ").split('|').enumerate() {
+                let p = part.trim();
+                if idx == 0 {
+                    ts = p.to_string();
+                    continue;
+                }
+                if let Some(v) = p.strip_prefix("kind=") {
+                    kind = v.trim().to_string();
+                    continue;
+                }
+                if let Some(v) = p.strip_prefix("name=") {
+                    name = v.trim().to_string();
+                    continue;
+                }
+                if let Some(v) = p.strip_prefix("path=") {
+                    path = Some(v.trim().to_string());
+                }
+            }
+
+            if let Some(path) = path {
+                rows.push(format!(
+                    "- {} | kind={} | name={} | path={}",
+                    ts, kind, name, path
+                ));
+            }
+        }
+
+        if rows.is_empty() {
+            return None;
+        }
+
+        let start = rows.len().saturating_sub(max_items);
+        Some(rows[start..].join("\n"))
+    }
+
     fn preview_text(text: &str, max_chars: usize) -> String {
         let mut out = String::new();
         for (idx, ch) in text.chars().enumerate() {
@@ -613,10 +665,19 @@ impl Agent {
             let base_prompt = soul.system_prompt();
             let user_tz = std::env::var("TIMEZONE").unwrap_or_else(|_| "Europe/Berlin".to_string());
             let now_utc = chrono::Utc::now().to_rfc3339();
-            format!(
+            let mut prompt = format!(
                 "{}\n\n## Current Session\n- Chat ID: {}\n- User timezone: {}\n- Current UTC time: {}\n- IMPORTANT: If the user mentions a time (for example \"at 19:20\"), it is ALWAYS in their local timezone ({}). Convert that time to UTC before passing it to cron_add. Example: 19:20 CET = 18:20 UTC.\n\n## Agent Behavior\n- When you have tools available, USE them to accomplish the task. Do NOT describe steps you would take — execute them.\n- Write scripts, run commands, fetch data, create files — then report the RESULT to the user, not the plan.\n- If a task requires multiple steps (e.g. install a package, write a script, run it), do ALL steps yourself using your tools before responding.\n- Only explain your approach if the user explicitly asks for an explanation or if you truly cannot execute the task.\n- Never say 'you could do X' or 'here are the steps' when you can do it yourself with the available tools.\n- If you need to continue working internally without messaging the user (e.g. between tool calls when you need to think about the next step), reply with exactly NO_REPLY — this will suppress the message and let you continue. Use this when intermediate output would just be noise for the user.\n- Never claim missing permissions or installation limits unless a tool call actually failed and you quote the concrete stderr/exit code in your reply.\n\n## File Handling Rules\n- If the user asks to store, move, rename, or organize files (for example: 'lege die Dateien ab'), do ONLY file operations.\n- Do NOT read, extract, summarize, or analyze file contents unless the user explicitly asks for content analysis.\n- For organization tasks, verify paths and report what was moved/stored, not file content.\n- Telegram uploads are persisted under `skills/uploads`.\n- Upload references are also logged to `soul/uploads_index.md`.\n- If the user refers to an earlier upload without an exact path (for example \"the memo from earlier\"), first inspect `soul/uploads_index.md` and/or `skills/uploads` using tools.\n\n## File Upload Reply Format\n- If you created a file that should be sent back into the chat, return JSON in this exact shape: {{\"text\":\"optional short message\",\"upload_path\":\"relative/path/to/file.ext\",\"upload_caption\":\"optional caption\"}}.\n- Use workspace-relative paths only (no absolute paths, no ..).",
                 base_prompt, chat_id, user_tz, now_utc, user_tz
-            )
+            );
+            if let Some(upload_context) = self.recent_upload_index_context(12) {
+                prompt.push_str(
+                    "\n\n## Recent Upload Index (Structured)\n\
+- The following entries are authoritative records from `soul/uploads_index.md`.\n\
+- When the user references an earlier file/memo, use these paths directly.\n",
+                );
+                prompt.push_str(&upload_context);
+            }
+            prompt
         };
 
         let mut messages = vec![LlmMessage {
